@@ -2543,6 +2543,32 @@ public bool TraceEntityFilterStuff(int iEntity, int iMask)
     return iEntity > MaxClients;
 }
 
+stock bool TraceGroundHeight(const float fPos[3], float &fHeight)
+{
+	float fFrom[3];
+	fFrom[0] = fPos[0];
+	fFrom[1] = fPos[1];
+	fFrom[2] = fPos[2] + HalfHumanHeight + 0.001;
+
+	float fTo[3];
+	fTo[0] = fPos[0];
+	fTo[1] = fPos[1];
+	fTo[2] = fPos[2] - 10000.0;
+
+	Handle hTrace = TR_TraceRayFilterEx(fFrom, fTo, MASK_NPCSOLID_BRUSHONLY, RayType_EndPoint, TraceEntityFilterStuff);
+	bool bDidHit = TR_DidHit(hTrace);
+
+	if (bDidHit)
+	{
+		float fEndPos[3];
+		TR_GetEndPosition(fEndPos, hTrace);
+		fHeight = fEndPos[2];
+	}
+
+	delete hTrace;
+	return bDidHit;
+}
+
 stock bool ProcessGrenadeThrow(int iClient, float fTarget[3], int iGrenadeEnt = -1)
 {
 	int iGrenadeSlot = iGrenadeEnt != -1 ? iGrenadeEnt : GetPlayerWeaponSlot(iClient, CS_SLOT_GRENADE);
@@ -2557,7 +2583,7 @@ stock bool ProcessGrenadeThrow(int iClient, float fTarget[3], int iGrenadeEnt = 
 	fGroundTarget[2] = fTarget[2];
 
 	float fHeight;
-	if (NavMesh_GetGroundHeight(fTarget, fHeight))
+	if (TraceGroundHeight(fTarget, fHeight))
 		fGroundTarget[2] = fHeight;
 
 	float fLookAt[3];

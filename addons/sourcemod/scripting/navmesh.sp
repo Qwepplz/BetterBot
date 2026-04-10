@@ -3726,7 +3726,10 @@ public int Native_NavMeshGetGroundHeight(Handle plugin, int numParams)
 	float flHeight = view_as<float>(GetNativeCellRef(2));
 	bool bResult = NavMeshGetGroundHeight(flPos, flHeight, flNormal);
 	SetNativeCellRef(2, flHeight);
-	SetNativeArray(3, flNormal, 3);
+	if (numParams >= 3)
+	{
+		SetNativeArray(3, flNormal, 3);
+	}
 	return bResult;
 }
 
