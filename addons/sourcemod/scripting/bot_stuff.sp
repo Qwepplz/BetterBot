@@ -1294,8 +1294,18 @@ public MRESReturn BotCOSandSIN(DHookReturn hReturn)
 
 public MRESReturn CCSBot_GetPartPosition(DHookReturn hReturn, DHookParam hParams)
 {
-	int iPlayer = hParams.Get(1);
+	if (hParams == null)
+		return MRES_Ignored;
+
+	Address pPlayer = hParams.GetAddress(1);
+	if (pPlayer == Address_Null)
+		return MRES_Ignored;
+
+	int iPlayer = GetClientFromAddress(pPlayer);
 	int iPart = hParams.Get(2);
+
+	if (!IsValidClient(iPlayer))
+		return MRES_Ignored;
 
 	int iBone = LookupBone(iPlayer, "head_0");
 	if (iBone < 0 || iPart != 2)
@@ -1342,6 +1352,11 @@ public MRESReturn CCSBot_OnAudibleEvent(int iBot, DHookParam hParams)
 
 public MRESReturn CCSBot_SetLookAt(int iClient, DHookParam hParams)
 {
+	if (!IsValidClient(iClient) || !IsFakeClient(iClient) || hParams == null)
+		return MRES_Ignored;
+
+	bool bPosNull = hParams.IsNull(2);
+
 	char szDesc[64];
 	DHookGetParamString(hParams, 1, szDesc, sizeof(szDesc));
 
@@ -1362,6 +1377,9 @@ public MRESReturn CCSBot_SetLookAt(int iClient, DHookParam hParams)
 	}
 	else if (strcmp(szDesc, "Last Enemy Position") == 0)
 	{
+		if (bPosNull)
+			return MRES_Ignored;
+
 		if (IsValidClient(g_iTarget[iClient]) && IsPlayerAlive(g_iTarget[iClient]) && CanThrowNade(iClient) && IsItMyChance(1.0) && GetTask(iClient) != ESCAPE_FROM_BOMB && GetTask(iClient) != ESCAPE_FROM_FLAMES && GetEntityMoveType(iClient) != MOVETYPE_LADDER)
 		{
 			float fPos[3];
@@ -1377,7 +1395,7 @@ public MRESReturn CCSBot_SetLookAt(int iClient, DHookParam hParams)
 	}
 	else if (strcmp(szDesc, "GrenadeThrowBend") == 0)
 	{
-		if (g_bThrowGrenade[iClient])
+		if (g_bThrowGrenade[iClient] && !bPosNull)
 			hParams.SetVector(2, g_fNadeTarget[iClient]);
 
 		hParams.Set(4, 8.0);
@@ -1386,6 +1404,9 @@ public MRESReturn CCSBot_SetLookAt(int iClient, DHookParam hParams)
 	}
 	else if (strcmp(szDesc, "Noise") == 0)
 	{
+		if (bPosNull)
+			return MRES_Ignored;
+
 		bool bIsWalking = !!GetEntProp(iClient, Prop_Send, "m_bIsWalking");
 		float fClientEyes[3], fNoisePos[3];
 		GetClientEyePosition(iClient, fClientEyes);
@@ -1422,6 +1443,9 @@ public MRESReturn CCSBot_SetLookAt(int iClient, DHookParam hParams)
 	}
 	else if (strcmp(szDesc, "Nearby enemy gunfire") == 0)
 	{
+		if (bPosNull)
+			return MRES_Ignored;
+
 		float fPos[3];
 		DHookGetParamVector(hParams, 2, fPos);
 
@@ -1439,6 +1463,9 @@ public MRESReturn CCSBot_SetLookAt(int iClient, DHookParam hParams)
 	}
 	else
 	{
+		if (bPosNull)
+			return MRES_Ignored;
+
 		float fPos[3];
 		DHookGetParamVector(hParams, 2, fPos);
 		fPos[2] += 25.0;
@@ -1449,6 +1476,9 @@ public MRESReturn CCSBot_SetLookAt(int iClient, DHookParam hParams)
 
 public MRESReturn CCSBot_PickNewAimSpot(int iClient, DHookParam hParams)
 {
+	if (!IsValidClient(iClient) || !IsFakeClient(iClient))
+		return MRES_Ignored;
+
     if (!g_bIsProBot[iClient])
         return MRES_Ignored;
 
