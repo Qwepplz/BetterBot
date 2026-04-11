@@ -328,6 +328,7 @@ native bool PrecacheSound(const char[] sound, bool preload=false);
  */
 #pragma deprecated Doesn't work correctly, always returns true.
 native bool IsSoundPrecached(const char[] sound);
+#pragma deprecated
 
 /**
  * Creates different types of ingame messages.
@@ -355,6 +356,7 @@ native void CreateDialog(int client, Handle kv, DialogType type);
  */
 #pragma deprecated See GetEngineVersion()
 native int GuessSDKVersion();
+#pragma deprecated
 
 /**
  * Gets the engine version that the currently-loaded SM core was compiled against.

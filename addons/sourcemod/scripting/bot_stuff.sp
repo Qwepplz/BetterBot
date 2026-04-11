@@ -1314,7 +1314,11 @@ public MRESReturn CCSBot_OnAudibleEvent(int iBot, DHookParam hParams)
 	if (!IsValidClient(iBot) || !IsFakeClient(iBot) || hParams == null)
 		return MRES_Ignored;
 
-	int iClient = hParams.Get(2);
+	Address pClient = hParams.GetAddress(2);
+	if (pClient == Address_Null)
+		return MRES_Ignored;
+
+	int iClient = GetClientFromAddress(pClient);
 	if (!IsValidClient(iClient) || GetClientTeam(iBot) == GetClientTeam(iClient))
 		return MRES_Ignored;
 
@@ -2233,6 +2237,20 @@ stock Address SetupAddress(GameData hGameConfig, const char[] szName)
 	if (!pAddr)
 		SetFailState("Failed to get %s address.", szName);
 	return pAddr;
+}
+
+stock int GetClientFromAddress(Address pEntity)
+{
+	if (pEntity == Address_Null)
+		return -1;
+
+	for (int i = 1; i <= MaxClients; i++)
+	{
+		if (IsValidClient(i) && GetEntityAddress(i) == pEntity)
+			return i;
+	}
+
+	return -1;
 }
 
 int GetFriendsWithPrimary(int iClient)
