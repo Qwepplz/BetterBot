@@ -315,6 +315,7 @@ public void OnPluginStart()
 
     HookEventEx("player_spawn", OnPlayerSpawn);
     HookEventEx("player_death", OnPlayerDeath);
+    HookEventEx("player_team", OnPlayerTeam);
 
     HookEventEx("weapon_zoom", OnWeaponZoom);
     HookEventEx("weapon_fire", OnWeaponFire);
@@ -531,12 +532,9 @@ void InitializeMapRuntime()
 
 	for (int i = 1; i <= MaxClients; i++)
 	{
-		if (IsClientInGame(i) && IsFakeClient(i))
+		if (IsClientInGame(i))
 			SetPlayerTeammateColor(i);
 	}
-
-	if (g_iPlayerResourceEntity != -1 && IsValidEntity(g_iPlayerResourceEntity))
-		OnThinkPost(g_iPlayerResourceEntity);
 }
 
 public Action Timer_TryHookPlayerResourceEntity(Handle hTimer, any data)
@@ -909,12 +907,7 @@ void InitializeClientProfileData(int iClient)
     g_iProfileRank[iClient] = Math_GetRandomInt(1, 40);
 
     if (!IsFakeClient(iClient))
-    {
-        char szColor[64];
-        GetClientInfo(iClient, "cl_color", szColor, sizeof(szColor));
-        g_iPlayerColor[iClient] = StringToInt(szColor);
         return;
-    }
 
     g_bIsProBot[iClient] = IsBotInDatabase(iClient);
 
@@ -1960,6 +1953,15 @@ public void OnPlayerSpawn(Event eEvent, const char[] szName, bool bDontBroadcast
         if (strcmp(szWeapon, "weapon_hkp2000") == 0)
             ReplaceWeapon(iClient, CS_SLOT_SECONDARY, "weapon_usp_silencer");
     }
+}
+
+public void OnPlayerTeam(Event eEvent, const char[] szName, bool bDontBroadcast)
+{
+	int iClient = GetClientOfUserId(eEvent.GetInt("userid"));
+	if (!IsValidClient(iClient))
+		return;
+
+	CreateTimer(0.2, Timer_RefreshPlayerResourceData, GetClientUserId(iClient), TIMER_FLAG_NO_MAPCHANGE);
 }
 
 public void BotMimic_OnPlayerStopsMimicing(int iClient, char[] szName, char[] szCategory, char[] szPath)
@@ -3924,39 +3926,35 @@ stock void SetDisposition(int iClient, DispositionType eDisposition)
 
 stock void SetPlayerTeammateColor(int iClient)
 {
-	if (GetClientTeam(iClient) <= CS_TEAM_SPECTATOR)
+	if (!IsValidClient(iClient))
 		return;
 
-	if (g_iPlayerColor[iClient] > -1)
+	int iTeam = GetClientTeam(iClient);
+	if (iTeam <= CS_TEAM_SPECTATOR)
 		return;
 
-	for (int iColor = 0; iColor < 5; iColor++)
+	int iColor = 0;
+	for (int iOther = 1; iOther <= MaxClients; iOther++)
 	{
-		bool bColorTaken = false;
+		if (!IsValidClient(iOther))
+			continue;
 
-		for (int iOther = 1; iOther <= MaxClients; iOther++)
+		if (GetClientTeam(iOther) != iTeam)
+			continue;
+
+		if (iColor < 5)
 		{
-			if (!IsValidClient(iOther))
-				continue;
-
-			if (GetClientTeam(iOther) != GetClientTeam(iClient))
-				continue;
-
-			if (g_iPlayerColor[iOther] == iColor && iOther != iClient)
-			{
-				bColorTaken = true;
-				break;
-			}
+			g_iPlayerColor[iOther] = iColor;
+			iColor++;
 		}
-
-		if (!bColorTaken)
+		else
 		{
-			g_iPlayerColor[iClient] = iColor;
-			return;
+			g_iPlayerColor[iOther] = -1;
 		}
 	}
 
-	g_iPlayerColor[iClient] = -1;
+	if (g_iPlayerResourceEntity != -1 && IsValidEntity(g_iPlayerResourceEntity))
+		OnThinkPost(g_iPlayerResourceEntity);
 }
 
 public void AutoStop(int iClient, float fVel[3], float fAngles[3])
