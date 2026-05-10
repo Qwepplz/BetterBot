@@ -12,6 +12,8 @@
 #include <PTaH>
 #include <bot_steamids>
 
+#define TEAMMATE_COLOR_COUNT 5
+
 enum
 {
 	DEFIDX_DEAGLE = 1,
@@ -71,6 +73,7 @@ float g_fRoundStart, g_fFreezeTimeEnd;
 float g_fLookAngleMaxAccel[MAXPLAYERS+1], g_fReactionTime[MAXPLAYERS+1], g_fAggression[MAXPLAYERS+1], g_fShootTimestamp[MAXPLAYERS+1], g_fThrowNadeTimestamp[MAXPLAYERS+1], g_fCrouchTimestamp[MAXPLAYERS+1];
 float g_fSniperRetreatCooldown[MAXPLAYERS+1];
 float g_fBombPos[3];
+StringMap g_smHumanTeammateColors;
 enum ScriptAction
 {
 	ScriptAction_None = 0,
@@ -527,7 +530,7 @@ void InitializeMapRuntime()
 
 	HookPlayerResourceEntity();
 
-    Array_Fill(g_iPlayerColor, MaxClients + 1, -1);
+	ResetTeammateColorAssignments();
 
 	for (int i = 1; i <= MaxClients; i++)
 	{
@@ -905,6 +908,7 @@ public void OnClientPutInServer(int iClient)
 public void OnClientPostAdminCheck(int iClient)
 {
 	InitializeClientProfileData(iClient);
+	CreateTimer(0.2, Timer_RefreshPlayerResourceData, GetClientUserId(iClient), TIMER_FLAG_NO_MAPCHANGE);
 }
 
 void InitializeClientProfileData(int iClient)
@@ -3950,6 +3954,91 @@ stock void SetDisposition(int iClient, DispositionType eDisposition)
 	SetEntData(iClient, g_iBotDispositionOffset, eDisposition);
 }
 
+void ResetTeammateColorAssignments()
+{
+	delete g_smHumanTeammateColors;
+	g_smHumanTeammateColors = new StringMap();
+	Array_Fill(g_iPlayerColor, MaxClients + 1, -1);
+}
+
+bool GetHumanTeammateColorKey(int iClient, char[] szKey, int iSize)
+{
+	if (IsFakeClient(iClient))
+		return false;
+
+	if (!GetClientAuthId(iClient, AuthId_Steam2, szKey, iSize, true))
+		return false;
+
+	if (szKey[0] == '\0' || StrEqual(szKey, "BOT") || StrEqual(szKey, "STEAM_ID_PENDING"))
+		return false;
+
+	return true;
+}
+
+bool IsTeammateColorInUse(int iTeam, int iColor, int iIgnoreClient)
+{
+	for (int iOther = 1; iOther <= MaxClients; iOther++)
+	{
+		if (iOther == iIgnoreClient || !IsValidClient(iOther))
+			continue;
+
+		if (GetClientTeam(iOther) == iTeam && g_iPlayerColor[iOther] == iColor)
+			return true;
+	}
+
+	return false;
+}
+
+int FindAvailableTeammateColor(int iTeam, int iClient)
+{
+	int iAvailableColors[TEAMMATE_COLOR_COUNT];
+	int iAvailableCount = 0;
+
+	for (int iColor = 0; iColor < TEAMMATE_COLOR_COUNT; iColor++)
+	{
+		if (!IsTeammateColorInUse(iTeam, iColor, iClient))
+		{
+			iAvailableColors[iAvailableCount] = iColor;
+			iAvailableCount++;
+		}
+	}
+
+	if (iAvailableCount == 0)
+		return -1;
+
+	return iAvailableColors[Math_GetRandomInt(0, iAvailableCount - 1)];
+}
+
+bool EnsurePlayerTeammateColor(int iClient, int iTeam)
+{
+	if (g_iPlayerColor[iClient] >= 0 && g_iPlayerColor[iClient] < TEAMMATE_COLOR_COUNT)
+		return true;
+
+	char szKey[32];
+	bool bHasHumanKey = GetHumanTeammateColorKey(iClient, szKey, sizeof(szKey));
+	int iColor;
+
+	if (!IsFakeClient(iClient) && !bHasHumanKey)
+		return false;
+
+	if (bHasHumanKey && g_smHumanTeammateColors.GetValue(szKey, iColor))
+	{
+		g_iPlayerColor[iClient] = iColor;
+		return true;
+	}
+
+	iColor = FindAvailableTeammateColor(iTeam, iClient);
+	if (iColor == -1)
+		return false;
+
+	g_iPlayerColor[iClient] = iColor;
+
+	if (bHasHumanKey)
+		g_smHumanTeammateColors.SetValue(szKey, iColor);
+
+	return true;
+}
+
 stock void SetPlayerTeammateColor(int iClient)
 {
 	if (!IsValidClient(iClient))
@@ -3959,25 +4048,7 @@ stock void SetPlayerTeammateColor(int iClient)
 	if (iTeam <= CS_TEAM_SPECTATOR)
 		return;
 
-	int iColor = 0;
-	for (int iOther = 1; iOther <= MaxClients; iOther++)
-	{
-		if (!IsValidClient(iOther))
-			continue;
-
-		if (GetClientTeam(iOther) != iTeam)
-			continue;
-
-		if (iColor < 5)
-		{
-			g_iPlayerColor[iOther] = iColor;
-			iColor++;
-		}
-		else
-		{
-			g_iPlayerColor[iOther] = -1;
-		}
-	}
+	EnsurePlayerTeammateColor(iClient, iTeam);
 
 	if (g_iPlayerResourceEntity != -1 && IsValidEntity(g_iPlayerResourceEntity))
 		OnThinkPost(g_iPlayerResourceEntity);
