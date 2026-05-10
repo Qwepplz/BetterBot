@@ -88,6 +88,9 @@ int g_iScriptActionIndex[MAXPLAYERS+1];
 float g_fScriptActionStart[MAXPLAYERS+1];
 float g_fScriptActionLastPos[MAXPLAYERS+1][3];
 float g_fScriptActionLastMoveTime[MAXPLAYERS+1];
+float g_fLegacyDefaultNadeActionStart[MAXPLAYERS+1];
+float g_fLegacyDefaultNadeLastPos[MAXPLAYERS+1][3];
+float g_fLegacyDefaultNadeLastMoveTime[MAXPLAYERS+1];
 bool g_bPeekAssigned[MAXPLAYERS+1];
 bool g_bTeamPeekUsedRound[4];
 bool g_bTeamPeekRollResolved[4];
@@ -132,6 +135,8 @@ int g_iAvgMoneyT, g_iAvgMoneyCT;
 float g_fLastNavUpdate[MAXPLAYERS+1][3];
 float g_fWeaponPickupCooldown[MAXPLAYERS+1];
 float g_fNadeLineupCooldown[MAXPLAYERS+1];
+#define LEGACY_DEFAULT_NADE_STUCK_TIMEOUT 5.0
+#define LEGACY_DEFAULT_NADE_RETRY_COOLDOWN 25.0
 #define SCRIPT_LINEUP_FAILURE_COOLDOWN 5.0
 #define SCRIPT_PEEK_OPENING_WINDOW 35.0
 #define SCRIPT_PEEK_CHANCE 35.0
@@ -1022,6 +1027,7 @@ public void OnRoundStart(Event eEvent, const char[] szName, bool bDontBroadcast)
 		g_iTarget[i] = -1;
 		g_iPrevTarget[i] = -1;
 		g_iDoingSmokeNum[i] = -1;
+		ResetClientLegacyDefaultNadeTracking(i);
 
 		g_fShootTimestamp[i] = 0.0;
 		g_fThrowNadeTimestamp[i] = 0.0;
@@ -1660,6 +1666,7 @@ public Action OnPlayerRunCmd(int iClient, int &iButtons, int &iImpulse, float fV
 
 		ResetNadeTimestamps();
 		g_iDoingSmokeNum[iClient] = -1;
+		ResetClientLegacyDefaultNadeTracking(iClient);
 	}
 
 	if (g_iDoingSmokeNum[iClient] == -1 && fNow >= g_fNadeLineupCooldown[iClient])
@@ -1686,7 +1693,11 @@ public Action OnPlayerRunCmd(int iClient, int &iButtons, int &iImpulse, float fV
 		}
 
 		if (!bAssignedScriptLineup && g_iScriptAction[iClient] == ScriptAction_None)
-			g_iDoingSmokeNum[iClient] = GetNearestGrenade(iClient);
+		{
+			int iLegacyNade = GetNearestGrenade(iClient);
+			if (iLegacyNade != -1)
+				StartClientLegacyDefaultNadeAction(iClient, iLegacyNade, fNow);
+		}
 
 		g_fNadeLineupCooldown[iClient] = fNow + 1.0;
 	}
@@ -1710,6 +1721,19 @@ public Action OnPlayerRunCmd(int iClient, int &iButtons, int &iImpulse, float fV
 		g_aNades.GetArray(g_iDoingSmokeNum[iClient], sNade);
 		SetNadeTimestamp(g_iDoingSmokeNum[iClient], fNow);
 		float fDisToNade = GetVectorDistance(g_fBotOrigin[iClient], sNade.fPos);
+
+		if ((fNow - g_fLegacyDefaultNadeActionStart[iClient]) > LEGACY_DEFAULT_NADE_STUCK_TIMEOUT)
+		{
+			FailClientLegacyDefaultNadeAction(iClient, "timed out", fNow);
+			return Plugin_Changed;
+		}
+
+		if (fDisToNade >= 25.0 && IsLegacyDefaultNadeMovementStale(iClient, fNow))
+		{
+			FailClientLegacyDefaultNadeAction(iClient, "movement stale", fNow);
+			return Plugin_Changed;
+		}
+
 		BotMoveTo(iClient, sNade.fPos, FASTEST_ROUTE);
 		if (fDisToNade < 25.0)
 		{
@@ -1967,6 +1991,7 @@ public void OnPlayerTeam(Event eEvent, const char[] szName, bool bDontBroadcast)
 public void BotMimic_OnPlayerStopsMimicing(int iClient, char[] szName, char[] szCategory, char[] szPath)
 {
     g_iDoingSmokeNum[iClient] = -1;
+	ResetClientLegacyDefaultNadeTracking(iClient);
     ClearClientScriptAction(iClient);
 }
 
@@ -1987,6 +2012,7 @@ public void OnClientDisconnect(int iClient)
 	g_iTarget[iClient] = -1;
 	g_iPrevTarget[iClient] = -1;
 	g_iDoingSmokeNum[iClient] = -1;
+	ResetClientLegacyDefaultNadeTracking(iClient);
 	ClearClientScriptAction(iClient);
 	g_bPeekAssigned[iClient] = false;
 	g_bAngleAssigned[iClient] = false;
@@ -2742,7 +2768,7 @@ public int GetNearestGrenade(int iClient)
 		NadeLineup sNade;
 		g_aNades.GetArray(i, sNade);
 
-		if ((GetGameTime() - sNade.fTimestamp) < 25.0)
+		if ((GetGameTime() - sNade.fTimestamp) < LEGACY_DEFAULT_NADE_RETRY_COOLDOWN)
 			continue;
 
 		if (GetClientTeam(iClient) != sNade.iTeam)
@@ -4060,6 +4086,61 @@ stock void ClearClientScriptAction(int iClient)
 	g_fScriptActionLastPos[iClient][2] = 0.0;
 }
 
+stock void ResetClientLegacyDefaultNadeTracking(int iClient)
+{
+	g_fLegacyDefaultNadeActionStart[iClient] = 0.0;
+	g_fLegacyDefaultNadeLastMoveTime[iClient] = 0.0;
+	g_fLegacyDefaultNadeLastPos[iClient][0] = 0.0;
+	g_fLegacyDefaultNadeLastPos[iClient][1] = 0.0;
+	g_fLegacyDefaultNadeLastPos[iClient][2] = 0.0;
+}
+
+stock void StartClientLegacyDefaultNadeAction(int iClient, int iNade, float fNow)
+{
+	g_iDoingSmokeNum[iClient] = iNade;
+	g_fLegacyDefaultNadeActionStart[iClient] = fNow;
+	g_fLegacyDefaultNadeLastMoveTime[iClient] = fNow;
+	Array_Copy(g_fBotOrigin[iClient], g_fLegacyDefaultNadeLastPos[iClient], 3);
+}
+
+stock bool IsLegacyDefaultNadeMovementStale(int iClient, float fNow)
+{
+	float fMoveDelta = GetVectorDistance(g_fBotOrigin[iClient], g_fLegacyDefaultNadeLastPos[iClient]);
+	if (fMoveDelta > 8.0)
+	{
+		Array_Copy(g_fBotOrigin[iClient], g_fLegacyDefaultNadeLastPos[iClient], 3);
+		g_fLegacyDefaultNadeLastMoveTime[iClient] = fNow;
+		return false;
+	}
+
+	return (fNow - g_fLegacyDefaultNadeLastMoveTime[iClient]) > LEGACY_DEFAULT_NADE_STUCK_TIMEOUT;
+}
+
+stock void FailClientLegacyDefaultNadeAction(int iClient, const char[] szReason, float fNow)
+{
+	int iNade = g_iDoingSmokeNum[iClient];
+	if (g_aNades != null && iNade >= 0 && iNade < g_aNades.Length)
+	{
+		NadeLineup sNade;
+		g_aNades.GetArray(iNade, sNade);
+		sNade.fTimestamp = fNow;
+		g_aNades.SetArray(iNade, sNade);
+
+		if (StrEqual(szReason, "timed out"))
+			PrintToServer("Warning: legacy default nade client=%N replay=%s failed: timed out at pos=%.1f %.1f %.1f; retry after %.1f sec.", iClient, sNade.szReplay, sNade.fPos[0], sNade.fPos[1], sNade.fPos[2], LEGACY_DEFAULT_NADE_RETRY_COOLDOWN);
+		else if (StrEqual(szReason, "movement stale"))
+			PrintToServer("Warning: legacy default nade client=%N replay=%s failed: movement stale at pos=%.1f %.1f %.1f; retry after %.1f sec.", iClient, sNade.szReplay, sNade.fPos[0], sNade.fPos[1], sNade.fPos[2], LEGACY_DEFAULT_NADE_RETRY_COOLDOWN);
+		else
+			PrintToServer("Warning: legacy default nade client=%N replay=%s failed: %s at pos=%.1f %.1f %.1f; retry after %.1f sec.", iClient, sNade.szReplay, szReason, sNade.fPos[0], sNade.fPos[1], sNade.fPos[2], LEGACY_DEFAULT_NADE_RETRY_COOLDOWN);
+	}
+	else
+	{
+		PrintToServer("Warning: legacy default nade client=%N index=%d failed: %s; retry after %.1f sec.", iClient, iNade, szReason, LEGACY_DEFAULT_NADE_RETRY_COOLDOWN);
+	}
+
+	CancelClientLegacyDefaultNadeAction(iClient);
+}
+
 stock void CancelClientLegacyDefaultNadeAction(int iClient)
 {
 	if (g_iDoingSmokeNum[iClient] == -1)
@@ -4076,6 +4157,7 @@ stock void CancelClientLegacyDefaultNadeAction(int iClient)
 	g_iDoingSmokeNum[iClient] = -1;
 	g_bThrowGrenade[iClient] = false;
 	g_bNadeResolved[iClient] = false;
+	ResetClientLegacyDefaultNadeTracking(iClient);
 }
 
 stock void CancelClientScriptAction(int iClient, bool bSwitchWeapon = true)
@@ -4088,6 +4170,7 @@ stock void CancelClientScriptAction(int iClient, bool bSwitchWeapon = true)
 
 	g_bThrowGrenade[iClient] = false;
 	g_iDoingSmokeNum[iClient] = -1;
+	ResetClientLegacyDefaultNadeTracking(iClient);
 	ClearClientScriptAction(iClient);
 
 	if (bSwitchWeapon && IsValidClient(iClient) && IsPlayerAlive(iClient))
