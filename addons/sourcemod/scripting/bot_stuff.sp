@@ -1290,18 +1290,46 @@ public Action CS_OnBuyCommand(int iClient, const char[] szWeapon)
 	if (strcmp(szWeapon, "vest") == 0 || strcmp(szWeapon, "vesthelm") == 0 || strcmp(szWeapon, "defuser") == 0)
 		return bIsFullSave ? Plugin_Handled : Plugin_Continue;
 
-	if (strcmp(szWeapon, "molotov") == 0 || strcmp(szWeapon, "incgrenade") == 0 || strcmp(szWeapon, "decoy") == 0 ||
+	if (strcmp(szWeapon, "decoy") == 0)
+		return Plugin_Handled;
+
+	if (strcmp(szWeapon, "revolver") == 0)
+		return Plugin_Handled;
+
+	if (strcmp(szWeapon, "molotov") == 0 || strcmp(szWeapon, "incgrenade") == 0 ||
 	    strcmp(szWeapon, "flashbang") == 0 || strcmp(szWeapon, "hegrenade") == 0 || strcmp(szWeapon, "smokegrenade") == 0)
 		return bIsEco ? Plugin_Handled : Plugin_Continue;
 
 	if (strcmp(szWeapon, "p250") == 0 || strcmp(szWeapon, "tec9") == 0 || strcmp(szWeapon, "fiveseven") == 0 ||
 	    strcmp(szWeapon, "deagle") == 0 || strcmp(szWeapon, "elite") == 0 || strcmp(szWeapon, "cz75a") == 0 ||
-	    strcmp(szWeapon, "hkp2000") == 0 || strcmp(szWeapon, "usp_silencer") == 0 || strcmp(szWeapon, "glock") == 0 ||
-	    strcmp(szWeapon, "revolver") == 0)
+	    strcmp(szWeapon, "hkp2000") == 0 || strcmp(szWeapon, "usp_silencer") == 0 || strcmp(szWeapon, "glock") == 0)
 		return bIsFullSave ? Plugin_Handled : Plugin_Continue;
 
 	if (bIsEco && !g_bBuyingCheapDrop[iClient])
 		return Plugin_Handled;
+
+	if (IsBlockedOddPrimaryBuy(szWeapon))
+	{
+		if (IsValidEntity(GetPlayerWeaponSlot(iClient, CS_SLOT_PRIMARY)))
+			return Plugin_Handled;
+
+		CSWeaponID eRifle = (iTeam == CS_TEAM_T) ? CSWeapon_GALILAR : CSWeapon_FAMAS;
+		CSWeaponID eSMG = (iTeam == CS_TEAM_T) ? CSWeapon_MAC10 : CSWeapon_MP9;
+
+		if (iAccount >= CS_GetWeaponPrice(iClient, eRifle))
+		{
+			ReplaceWeapon(iClient, CS_SLOT_PRIMARY, (iTeam == CS_TEAM_T) ? "weapon_galilar" : "weapon_famas", true);
+			return Plugin_Changed;
+		}
+
+		if (iAccount >= CS_GetWeaponPrice(iClient, eSMG))
+		{
+			ReplaceWeapon(iClient, CS_SLOT_PRIMARY, (iTeam == CS_TEAM_T) ? "weapon_mac10" : "weapon_mp9", true);
+			return Plugin_Changed;
+		}
+
+		return Plugin_Handled;
+	}
 
 	if (!g_bBuyingCheapDrop[iClient] && GetPlayerWeaponSlot(iClient, CS_SLOT_PRIMARY) != -1 &&
 	    (strcmp(szWeapon, "galilar") == 0 || strcmp(szWeapon, "famas") == 0 || strcmp(szWeapon, "ak47") == 0 ||
@@ -1337,11 +1365,6 @@ public Action CS_OnBuyCommand(int iClient, const char[] szWeapon)
 			return Plugin_Changed;
 		}
 
-		if (IsItMyChance(5.0) && iAccount >= CS_GetWeaponPrice(iClient, CSWeapon_AUG))
-		{
-			ReplaceWeapon(iClient, CS_SLOT_PRIMARY, "weapon_aug", true);
-			return Plugin_Changed;
-		}
 	}
 
 	if (strcmp(szWeapon, "mac10") == 0 && IsItMyChance(40.0) && iAccount >= CS_GetWeaponPrice(iClient, CSWeapon_GALILAR))
@@ -2600,6 +2623,14 @@ bool BotTryToRetreat(int iClient, float fMaxRange = 400.0, float fDuration = -1.
 bool IsDefaultPistol(const char[] szWeapon)
 {
 	return strcmp(szWeapon, "weapon_hkp2000") == 0 || strcmp(szWeapon, "weapon_usp_silencer") == 0 || strcmp(szWeapon, "weapon_glock") == 0;
+}
+
+bool IsBlockedOddPrimaryBuy(const char[] szWeapon)
+{
+	return strcmp(szWeapon, "negev") == 0 || strcmp(szWeapon, "m249") == 0 ||
+	       strcmp(szWeapon, "scar20") == 0 || strcmp(szWeapon, "g3sg1") == 0 ||
+	       strcmp(szWeapon, "aug") == 0 || strcmp(szWeapon, "sg556") == 0 ||
+	       strcmp(szWeapon, "p90") == 0 || strcmp(szWeapon, "xm1014") == 0;
 }
 
 

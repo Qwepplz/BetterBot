@@ -98,7 +98,6 @@ Template Rifle
         WeaponPreference = ak47
 		WeaponPreference = m4a1_silencer
 		WeaponPreference = m4a1
-		WeaponPreference = aug
 		WeaponPreference = mp9
 		WeaponPreference = mac10
 		WeaponPreference = famas
@@ -108,15 +107,9 @@ Template Rifle
 End
 
 Template Punch
-        WeaponPreference = sg556
-        WeaponPreference = aug
         WeaponPreference = m4a1_silencer
         WeaponPreference = m4a1
         WeaponPreference = ak47
-        WeaponPreference = negev
-        WeaponPreference = m249
-        WeaponPreference = scar20
-        WeaponPreference = g3sg1
         WeaponPreference = awp
         WeaponPreference = galilar
         WeaponPreference = famas
@@ -124,62 +117,38 @@ End
 
 Template Sniper
         WeaponPreference = awp
-        WeaponPreference = scar20
-        WeaponPreference = g3sg1
         WeaponPreference = ak47
         WeaponPreference = m4a1_silencer
         WeaponPreference = m4a1
-        WeaponPreference = sg556
-        WeaponPreference = aug
-        WeaponPreference = negev
-        WeaponPreference = m249
         WeaponPreference = galilar
         WeaponPreference = famas
         WeaponPreference = ssg08
 End
 
 Template Power
-        WeaponPreference = negev
-        WeaponPreference = m249
-        WeaponPreference = scar20
-        WeaponPreference = g3sg1
         WeaponPreference = ak47
         WeaponPreference = m4a1_silencer
         WeaponPreference = m4a1
-        WeaponPreference = xm1014
-        WeaponPreference = sg556
-        WeaponPreference = aug
         WeaponPreference = awp
         WeaponPreference = galilar
         WeaponPreference = famas
 End
 
 Template AutoSniper
-        WeaponPreference = scar20
-        WeaponPreference = g3sg1
         WeaponPreference = awp
         WeaponPreference = m4a1_silencer
         WeaponPreference = m4a1
         WeaponPreference = ak47
-        WeaponPreference = sg556
-        WeaponPreference = aug
-        WeaponPreference = negev
-        WeaponPreference = m249
         WeaponPreference = galilar
         WeaponPreference = famas
         WeaponPreference = ssg08
 End
 
 Template Spray
-        WeaponPreference = negev
-        WeaponPreference = m249
-        WeaponPreference = p90
         WeaponPreference = mp7
         WeaponPreference = m4a1_silencer
         WeaponPreference = m4a1
         WeaponPreference = ak47
-        WeaponPreference = aug
-        WeaponPreference = sg556
         WeaponPreference = galilar
         WeaponPreference = famas
 End
