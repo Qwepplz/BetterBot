@@ -1654,6 +1654,7 @@ public Action OnPlayerRunCmd(int iClient, int &iButtons, int &iImpulse, float fV
 
 	float fNow = GetGameTime();
 	int iDefIndex = GetEntProp(g_iActiveWeapon[iClient], Prop_Send, "m_iItemDefinitionIndex");
+	BlockBotDisruptiveAltFire(iDefIndex, iButtons);
 
 	float fPlayerVelocity[3];
 	GetEntPropVector(iClient, Prop_Data, "m_vecAbsVelocity", fPlayerVelocity);
@@ -2623,6 +2624,20 @@ bool BotTryToRetreat(int iClient, float fMaxRange = 400.0, float fDuration = -1.
 bool IsDefaultPistol(const char[] szWeapon)
 {
 	return strcmp(szWeapon, "weapon_hkp2000") == 0 || strcmp(szWeapon, "weapon_usp_silencer") == 0 || strcmp(szWeapon, "weapon_glock") == 0;
+}
+
+void BlockBotDisruptiveAltFire(int iDefIndex, int &iButtons)
+{
+	if (!(iButtons & IN_ATTACK2))
+		return;
+
+	switch (iDefIndex)
+	{
+		case DEFIDX_GLOCK, DEFIDX_FAMAS, DEFIDX_M4A1S, DEFIDX_USPS:
+		{
+			iButtons &= ~IN_ATTACK2;
+		}
+	}
 }
 
 bool IsBlockedOddPrimaryBuy(const char[] szWeapon)

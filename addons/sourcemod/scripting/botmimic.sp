@@ -30,6 +30,14 @@
 // New in 0x02: bookmarkCount and bookmarks list
 #define BINARY_FORMAT_VERSION 0x02
 
+enum
+{
+	BM_DEFIDX_GLOCK = 4,
+	BM_DEFIDX_FAMAS = 10,
+	BM_DEFIDX_M4A1S = 60,
+	BM_DEFIDX_USPS = 61
+};
+
 #define DEFAULT_RECORD_FOLDER "data/botmimic/"
 
 // Flags set in FramInfo.additionalFields to inform, that there's more info afterwards.
@@ -387,9 +395,9 @@ public void OnPlayerRunCmdPost(int client, int buttons, int impulse, const float
 	
 	float vVel[3], vOrigin[3];
 	
-	Entity_GetAbsOrigin(client, vOrigin);
+	BotMimic_GetAbsOrigin(client, vOrigin);
 	iFrame.origin = vOrigin;
-	Entity_GetAbsVelocity(client, vVel);
+	BotMimic_GetAbsVelocity(client, vVel);
 	iFrame.actualVelocity = vVel;
 	
 	// Save the origin, angles and velocity in this frame.
@@ -401,7 +409,7 @@ public void OnPlayerRunCmdPost(int client, int buttons, int impulse, const float
 		Array_Copy(fBuffer, iAT.atOrigin, 3);
 		GetClientEyeAngles(client, fBuffer);
 		Array_Copy(fBuffer, iAT.atAngles, 3);
-		Entity_GetAbsVelocity(client, fBuffer);
+		BotMimic_GetAbsVelocity(client, fBuffer);
 		Array_Copy(fBuffer, iAT.atVelocity, 3);
 		
 		iAT.atFlags = ADDITIONAL_FIELD_TELEPORTED_ORIGIN|ADDITIONAL_FIELD_TELEPORTED_ANGLES|ADDITIONAL_FIELD_TELEPORTED_VELOCITY;
@@ -446,7 +454,7 @@ public void OnPlayerRunCmdPost(int client, int buttons, int impulse, const float
 	// Picked up a new one?
 	else
 	{
-		int iWeapon = Client_GetActiveWeapon(client);
+		int iWeapon = BotMimic_GetActiveWeapon(client);
 		
 		// He's holding a weapon and
 		if(iWeapon != -1 && 
@@ -501,8 +509,9 @@ public Action OnPlayerRunCmd(int client, int &buttons, int &impulse, float vel[3
 	
 	FrameInfo iFrame;
 	g_hBotMimicsRecord[client].GetArray(g_iBotMimicTick[client], iFrame, sizeof(FrameInfo));
-	
+
 	buttons = iFrame.playerButtons;
+	BlockBotDisruptiveAltFire(client, buttons);
 	impulse = iFrame.playerImpulse;
 	Array_Copy(iFrame.predictedVelocity, vel, 3);
 	
@@ -610,16 +619,16 @@ public Action OnPlayerRunCmd(int client, int &buttons, int &impulse, float vel[3
 		
 		Format(sAlias, sizeof(sAlias), "weapon_%s", sAlias);
 		
-		if(Client_HasWeapon(client, sAlias))
+		if(BotMimic_ClientHasWeapon(client, sAlias))
 		{
-			weapon = Client_GetWeapon(client, sAlias);
+			weapon = BotMimic_GetClientWeapon(client, sAlias);
 			g_iBotActiveWeapon[client] = weapon;
 			g_bBotSwitchedWeapon[client] = true;
 			SDKCall(g_hSwitchWeaponCall, client, weapon, 0);
 		}
 		else
 		{
-			weapon = GetPlayerWeaponSlot(client, eItems_GetWeaponSlotByClassName(sAlias));
+			weapon = GetPlayerWeaponSlot(client, BotMimic_GetWeaponSlotByClassName(sAlias));
 			g_iBotActiveWeapon[client] = weapon;
 			g_bBotSwitchedWeapon[client] = true;
 			SDKCall(g_hSwitchWeaponCall, client, weapon, 0);
@@ -1086,7 +1095,7 @@ public int SaveBookmark(Handle plugin, int numParams)
 	Array_Copy(fBuffer, iAT.atOrigin, 3);
 	GetClientEyeAngles(client, fBuffer);
 	Array_Copy(fBuffer, iAT.atAngles, 3);
-	Entity_GetAbsVelocity(client, fBuffer);
+	BotMimic_GetAbsVelocity(client, fBuffer);
 	Array_Copy(fBuffer, iAT.atVelocity, 3);
 	
 	iAT.atFlags = ADDITIONAL_FIELD_TELEPORTED_ORIGIN|ADDITIONAL_FIELD_TELEPORTED_ANGLES|ADDITIONAL_FIELD_TELEPORTED_VELOCITY;
@@ -1107,7 +1116,7 @@ public int SaveBookmark(Handle plugin, int numParams)
 	// Remember, we were teleported this frame!
 	iFrame.additionalFields |= iAT.atFlags;
 	
-	int iWeapon = Client_GetActiveWeapon(client);
+	int iWeapon = BotMimic_GetActiveWeapon(client);
 	if(iWeapon != INVALID_ENT_REFERENCE && iFrame.newWeapon == CSWeapon_NONE && IsValidEntity(iWeapon))
 	{
 		char sClassName[64];
@@ -1973,6 +1982,80 @@ stock bool CheckCreateDirectory(const char[] sPath, int mode)
 		}
 	}
 	return true;
+}
+
+void BlockBotDisruptiveAltFire(int client, int &buttons)
+{
+	if (!(buttons & IN_ATTACK2))
+		return;
+
+	int activeWeapon = GetEntPropEnt(client, Prop_Send, "m_hActiveWeapon");
+	if (!IsValidEntity(activeWeapon))
+		return;
+
+	int defIndex = GetEntProp(activeWeapon, Prop_Send, "m_iItemDefinitionIndex");
+	switch (defIndex)
+	{
+		case BM_DEFIDX_GLOCK, BM_DEFIDX_FAMAS, BM_DEFIDX_M4A1S, BM_DEFIDX_USPS:
+		{
+			buttons &= ~IN_ATTACK2;
+		}
+	}
+}
+
+void BotMimic_GetAbsOrigin(int entity, float origin[3])
+{
+	GetEntPropVector(entity, Prop_Send, "m_vecOrigin", origin);
+}
+
+void BotMimic_GetAbsVelocity(int entity, float velocity[3])
+{
+	GetEntPropVector(entity, Prop_Data, "m_vecAbsVelocity", velocity);
+}
+
+int BotMimic_GetActiveWeapon(int client)
+{
+	return GetEntPropEnt(client, Prop_Send, "m_hActiveWeapon");
+}
+
+bool BotMimic_ClientHasWeapon(int client, const char[] classname)
+{
+	return IsValidEntity(BotMimic_GetClientWeapon(client, classname));
+}
+
+int BotMimic_GetClientWeapon(int client, const char[] classname)
+{
+	int weapon = -1;
+	while ((weapon = FindEntityByClassname(weapon, classname)) != -1)
+	{
+		if (GetEntPropEnt(weapon, Prop_Send, "m_hOwnerEntity") == client)
+			return weapon;
+	}
+
+	return -1;
+}
+
+int BotMimic_GetWeaponSlotByClassName(const char[] classname)
+{
+	if (StrEqual(classname, "weapon_glock") || StrEqual(classname, "weapon_hkp2000") ||
+		StrEqual(classname, "weapon_usp_silencer") || StrEqual(classname, "weapon_p250") ||
+		StrEqual(classname, "weapon_deagle") || StrEqual(classname, "weapon_elite") ||
+		StrEqual(classname, "weapon_fiveseven") || StrEqual(classname, "weapon_tec9") ||
+		StrEqual(classname, "weapon_cz75a") || StrEqual(classname, "weapon_revolver"))
+		return CS_SLOT_SECONDARY;
+
+	if (StrEqual(classname, "weapon_flashbang") || StrEqual(classname, "weapon_hegrenade") ||
+		StrEqual(classname, "weapon_smokegrenade") || StrEqual(classname, "weapon_molotov") ||
+		StrEqual(classname, "weapon_incgrenade") || StrEqual(classname, "weapon_decoy"))
+		return CS_SLOT_GRENADE;
+
+	if (StrContains(classname, "weapon_knife") == 0 || StrEqual(classname, "weapon_bayonet"))
+		return CS_SLOT_KNIFE;
+
+	if (StrEqual(classname, "weapon_c4"))
+		return CS_SLOT_C4;
+
+	return CS_SLOT_PRIMARY;
 }
 
 stock void GetFileFromFrameHandle(ArrayList frames, char[] path, int maxlen)
