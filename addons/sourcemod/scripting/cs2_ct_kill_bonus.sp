@@ -29,6 +29,7 @@ ConVar g_cvBonusAmount;
 ConVar g_cvMaxMoney;
 
 bool g_bRoundActive;
+bool g_bClientChinese[MAXPLAYERS + 1];
 
 public Plugin myinfo =
 {
@@ -57,6 +58,21 @@ public void OnPluginStart()
 	HookEvent("round_end", Event_RoundEnd, EventHookMode_PostNoCopy);
 	HookEvent("bomb_exploded", Event_BombExploded, EventHookMode_PostNoCopy);
 	HookEvent("player_death", Event_PlayerDeath);
+
+	for (int client = 1; client <= MaxClients; client++)
+	{
+		RefreshClientLanguage(client);
+	}
+}
+
+public void OnClientPutInServer(int client)
+{
+	RefreshClientLanguage(client);
+}
+
+public void OnClientDisconnect(int client)
+{
+	g_bClientChinese[client] = false;
 }
 
 public void Event_RoundStart(Event event, const char[] name, bool dontBroadcast)
@@ -117,8 +133,63 @@ public void Frame_GiveCTKillBonus(any data)
 			newMoney = maxMoney;
 
 		SetEntProp(client, Prop_Send, "m_iAccount", newMoney);
-		PrintToChat(client, " \x06+$%d\x01: Team award for eliminating a Terrorist. / 消灭一名恐怖分子的团队奖励。", amount);
+		PrintTeamKillBonusMessage(client, amount);
 	}
+}
+
+void RefreshClientLanguage(int client)
+{
+	if (!IsValidClient(client) || IsFakeClient(client))
+		return;
+
+	g_bClientChinese[client] = false;
+	QueryClientConVar(client, "cl_language", OnClientLanguageQueried);
+}
+
+public void OnClientLanguageQueried(QueryCookie cookie, int client, ConVarQueryResult result, const char[] cvarName, const char[] cvarValue)
+{
+	if (!IsValidClient(client) || IsFakeClient(client))
+		return;
+
+	g_bClientChinese[client] = result == ConVarQuery_Okay && cvarValue[0] != '\0' && IsChineseLanguageValue(cvarValue);
+}
+
+bool IsChineseLanguageValue(const char[] value)
+{
+	return StrEqual(value, "schinese", false)
+		|| StrEqual(value, "tchinese", false)
+		|| StrEqual(value, "chi", false)
+		|| StrEqual(value, "zho", false)
+		|| StrEqual(value, "zh", false)
+		|| StrEqual(value, "zh-hans", false)
+		|| StrEqual(value, "zh_hans", false)
+		|| StrEqual(value, "zh-cn", false)
+		|| StrEqual(value, "zh_cn", false)
+		|| StrEqual(value, "zh-sg", false)
+		|| StrEqual(value, "zh_sg", false)
+		|| StrEqual(value, "zh-hant", false)
+		|| StrEqual(value, "zh_hant", false)
+		|| StrEqual(value, "zh-tw", false)
+		|| StrEqual(value, "zh_tw", false)
+		|| StrEqual(value, "zh-hk", false)
+		|| StrEqual(value, "zh_hk", false)
+		|| StrContains(value, "simplified", false) != -1
+		|| StrContains(value, "traditional", false) != -1
+		|| StrContains(value, "chinese", false) != -1;
+}
+
+void PrintTeamKillBonusMessage(int client, int amount)
+{
+	if (IsFakeClient(client))
+		return;
+
+	if (g_bClientChinese[client])
+	{
+		PrintToChat(client, " \x06+$%d\x01: 消灭一名恐怖分子的团队奖励。", amount);
+		return;
+	}
+
+	PrintToChat(client, " \x06+$%d\x01: Team award for eliminating a Terrorist.", amount);
 }
 
 bool IsEconomyLivePhase()
