@@ -117,6 +117,7 @@ public void Frame_GiveCTKillBonus(any data)
 			newMoney = maxMoney;
 
 		SetEntProp(client, Prop_Send, "m_iAccount", newMoney);
+		PrintToChat(client, " \x06+$%d\x01: Team award for eliminating a Terrorist. / 消灭一名恐怖分子的团队奖励。", amount);
 	}
 }
 
