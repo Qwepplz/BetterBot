@@ -64,24 +64,24 @@ static const char g_RankPointCvarNames[RANK_COUNT][] =
 
 static const char g_RankPointDefaultValues[RANK_COUNT][] =
 {
-	"1000",
-	"1200",
-	"1400",
+	"0",
+	"1300",
 	"1600",
-	"1800",
-	"2000",
+	"1900",
 	"2200",
-	"2400",
-	"2600",
+	"2500",
 	"2800",
-	"3000",
-	"3200",
+	"3100",
 	"3400",
-	"3600",
-	"3800",
+	"3700",
 	"4000",
-	"4200",
-	"4500"
+	"4300",
+	"4600",
+	"4900",
+	"5200",
+	"5500",
+	"5800",
+	"6300"
 };
 
 static const char g_RankPointDescriptions[RANK_COUNT][] =
