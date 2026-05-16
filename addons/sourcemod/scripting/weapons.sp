@@ -218,6 +218,15 @@ void RefreshWeapon(int client, int index, bool defaultKnife = false) {
     return;
   }
 
+  // Do not remove/recreate knife entities immediately from menu selections.
+  // Knife cosmetics are safely applied by the PTaH GiveNamedItem hooks when the
+  // engine gives the next round's knife. Killing and re-giving a knife in the
+  // middle of a round can leave stale weapon/viewmodel state that is consumed
+  // during the following round transition.
+  if (defaultKnife || index == -1 || (index >= 0 && index < sizeof(g_WeaponClasses) && IsKnifeClass(g_WeaponClasses[index]))) {
+    return;
+  }
+
   int size = GetEntPropArraySize(client, Prop_Send, "m_hMyWeapons");
 
   for (int i = 0; i < size; i++) {

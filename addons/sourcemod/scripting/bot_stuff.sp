@@ -17,6 +17,8 @@
 #define RETAKE_SAVE_MONEY_THRESHOLD 3000
 #define RETAKE_SAVE_MIN_BOMB_DISTANCE 1200.0
 #define RETAKE_SAVE_MOVE_DISTANCE 900.0
+#define RETAKE_SAVE_FAR_DISTANCE 2600.0
+#define RETAKE_SAVE_TARGET_STEP 600.0
 
 enum
 {
@@ -1675,6 +1677,12 @@ public Action OnPlayerRunCmd(int iClient, int &iButtons, int &iImpulse, float fV
 		Array_Copy(g_fBotOrigin[iClient], g_fLastNavUpdate[iClient], 3);
 	}
 
+	if (g_bIsProBot[iClient] && ShouldSaveInsteadOfRetake(iClient))
+	{
+		ProcessRetakeSaveBehavior(iClient, iButtons);
+		return Plugin_Changed;
+	}
+
 	int iPrimary = GetPlayerWeaponSlot(iClient, CS_SLOT_PRIMARY);
 	if (IsValidEntity(iPrimary) && fNow >= g_fSniperRetreatCooldown[iClient])
 	{
@@ -1739,12 +1747,6 @@ public Action OnPlayerRunCmd(int iClient, int &iButtons, int &iImpulse, float fV
 
 	if (GetDisposition(iClient) == SELF_DEFENSE && !ShouldSaveInsteadOfRetake(iClient))
 		SetDisposition(iClient, ENGAGE_AND_INVESTIGATE);
-
-	if (g_bIsProBot[iClient] && ShouldSaveInsteadOfRetake(iClient))
-	{
-		ProcessRetakeSaveBehavior(iClient, iButtons);
-		return Plugin_Changed;
-	}
 
 	if (g_pCurrArea[iClient] != INVALID_NAV_AREA)
 	{
@@ -2742,7 +2744,7 @@ void ProcessRetakeSaveBehavior(int iClient, int &iButtons)
 bool MoveAwayFromPlantedBomb(int iClient, const float fC4Pos[3])
 {
 	float fDistanceToBomb = GetVectorDistance(g_fBotOrigin[iClient], fC4Pos);
-	if (fDistanceToBomb >= RETAKE_SAVE_MIN_BOMB_DISTANCE)
+	if (fDistanceToBomb >= RETAKE_SAVE_FAR_DISTANCE)
 		return false;
 
 	float fAway[3];
@@ -2757,9 +2759,12 @@ bool MoveAwayFromPlantedBomb(int iClient, const float fC4Pos[3])
 	}
 
 	float fTarget[3];
-	fTarget[0] = g_fBotOrigin[iClient][0] + fAway[0] * RETAKE_SAVE_MOVE_DISTANCE;
-	fTarget[1] = g_fBotOrigin[iClient][1] + fAway[1] * RETAKE_SAVE_MOVE_DISTANCE;
-	fTarget[2] = g_fBotOrigin[iClient][2];
+	if (!FindRetakeSaveTarget(iClient, fC4Pos, fAway, fTarget))
+	{
+		fTarget[0] = g_fBotOrigin[iClient][0] + fAway[0] * RETAKE_SAVE_MOVE_DISTANCE;
+		fTarget[1] = g_fBotOrigin[iClient][1] + fAway[1] * RETAKE_SAVE_MOVE_DISTANCE;
+		fTarget[2] = g_fBotOrigin[iClient][2];
+	}
 
 	CNavArea pArea = NavMesh_GetNearestArea(fTarget, false, 1000.0, false, true, CS_TEAM_CT);
 	if (pArea == INVALID_NAV_AREA)
@@ -2767,6 +2772,34 @@ bool MoveAwayFromPlantedBomb(int iClient, const float fC4Pos[3])
 
 	BotMoveTo(iClient, fTarget, RETREAT_ROUTE);
 	return true;
+}
+
+bool FindRetakeSaveTarget(int iClient, const float fC4Pos[3], const float fAway[3], float fTarget[3])
+{
+	bool bFound = false;
+	float fBestDistance = GetVectorDistance(g_fBotOrigin[iClient], fC4Pos);
+	float fCandidate[3];
+
+	for (float fStep = RETAKE_SAVE_TARGET_STEP; fStep <= RETAKE_SAVE_FAR_DISTANCE; fStep += RETAKE_SAVE_TARGET_STEP)
+	{
+		fCandidate[0] = g_fBotOrigin[iClient][0] + fAway[0] * fStep;
+		fCandidate[1] = g_fBotOrigin[iClient][1] + fAway[1] * fStep;
+		fCandidate[2] = g_fBotOrigin[iClient][2];
+
+		CNavArea pArea = NavMesh_GetNearestArea(fCandidate, false, 1000.0, false, true, CS_TEAM_CT);
+		if (pArea == INVALID_NAV_AREA)
+			continue;
+
+		float fCandidateDistance = GetVectorDistance(fCandidate, fC4Pos);
+		if (!bFound || fCandidateDistance > fBestDistance)
+		{
+			Array_Copy(fCandidate, fTarget, 3);
+			fBestDistance = fCandidateDistance;
+			bFound = true;
+		}
+	}
+
+	return bFound;
 }
 
 bool ShouldBlockDefuseForBombGuard(int iClient)
