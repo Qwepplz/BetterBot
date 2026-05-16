@@ -13,6 +13,10 @@
 #include <bot_steamids>
 
 #define TEAMMATE_COLOR_COUNT 5
+#define BOMB_GUARD_CLEAR_RADIUS 500.0
+#define RETAKE_SAVE_MONEY_THRESHOLD 3000
+#define RETAKE_SAVE_MIN_BOMB_DISTANCE 1200.0
+#define RETAKE_SAVE_MOVE_DISTANCE 900.0
 
 enum
 {
@@ -700,6 +704,9 @@ public Action Timer_MoveToBomb(Handle hTimer, any data)
 		float fDistanceToBomb = GetVectorDistance(g_fBotOrigin[i], fC4Pos);
 
 		if (GetTask(i) == ESCAPE_FROM_BOMB || GetTask(i) == ESCAPE_FROM_FLAMES)
+			continue;
+
+		if (ShouldSaveInsteadOfRetake(i))
 			continue;
 
 		bool bShouldMoveToBomb = (bLastManStanding && fDistanceToBomb > 30.0) || fDistanceToBomb > 2000.0;
@@ -1730,8 +1737,14 @@ public Action OnPlayerRunCmd(int iClient, int &iButtons, int &iImpulse, float fV
 		g_fNadeLineupCooldown[iClient] = fNow + 1.0;
 	}
 
-	if (GetDisposition(iClient) == SELF_DEFENSE)
+	if (GetDisposition(iClient) == SELF_DEFENSE && !ShouldSaveInsteadOfRetake(iClient))
 		SetDisposition(iClient, ENGAGE_AND_INVESTIGATE);
+
+	if (g_bIsProBot[iClient] && ShouldSaveInsteadOfRetake(iClient))
+	{
+		ProcessRetakeSaveBehavior(iClient, iButtons);
+		return Plugin_Changed;
+	}
 
 	if (g_pCurrArea[iClient] != INVALID_NAV_AREA)
 	{
@@ -1805,6 +1818,12 @@ public Action OnPlayerRunCmd(int iClient, int &iButtons, int &iImpulse, float fV
 			ProcessWeaponPickup(iClient);
 			g_fWeaponPickupCooldown[iClient] = fNow + 0.5;
 		}
+	}
+
+	if (g_bIsProBot[iClient] && ShouldBlockDefuseForBombGuard(iClient))
+	{
+		iButtons &= ~IN_USE;
+		BotEquipBestWeapon(iClient, true);
 	}
 
 	if (g_bIsProBot[iClient] && GetDisposition(iClient) != IGNORE_ENEMIES)
@@ -2683,6 +2702,109 @@ int FindLooseBomb()
 		int iOwner = GetEntPropEnt(iEnt, Prop_Send, "m_hOwnerEntity");
 		if (!IsValidClient(iOwner))
 			return iEnt;
+	}
+	return -1;
+}
+
+bool ShouldSaveInsteadOfRetake(int iClient)
+{
+	if (!g_bBombPlanted || GetClientTeam(iClient) != CS_TEAM_CT)
+		return false;
+
+	if (g_iAliveCountT <= 0)
+		return false;
+
+	if (g_iAliveCountT - g_iAliveCountCT < 2)
+		return false;
+
+	int iAccount = GetEntProp(iClient, Prop_Send, "m_iAccount");
+	return iAccount <= RETAKE_SAVE_MONEY_THRESHOLD;
+}
+
+void ProcessRetakeSaveBehavior(int iClient, int &iButtons)
+{
+	iButtons &= ~IN_USE;
+
+	if (BotMimic_IsPlayerMimicing(iClient))
+		BotMimic_StopPlayerMimic(iClient);
+
+	if (g_iScriptAction[iClient] != ScriptAction_None)
+		CancelClientScriptAction(iClient, false);
+
+	SetDisposition(iClient, SELF_DEFENSE);
+	BotEquipBestWeapon(iClient, true);
+
+	float fC4Pos[3];
+	if (GetPlantedBombPosition(fC4Pos))
+		MoveAwayFromPlantedBomb(iClient, fC4Pos);
+}
+
+bool MoveAwayFromPlantedBomb(int iClient, const float fC4Pos[3])
+{
+	float fDistanceToBomb = GetVectorDistance(g_fBotOrigin[iClient], fC4Pos);
+	if (fDistanceToBomb >= RETAKE_SAVE_MIN_BOMB_DISTANCE)
+		return false;
+
+	float fAway[3];
+	SubtractVectors(g_fBotOrigin[iClient], fC4Pos, fAway);
+	fAway[2] = 0.0;
+
+	if (NormalizeVector(fAway, fAway) == 0.0)
+	{
+		fAway[0] = 1.0;
+		fAway[1] = 0.0;
+		fAway[2] = 0.0;
+	}
+
+	float fTarget[3];
+	fTarget[0] = g_fBotOrigin[iClient][0] + fAway[0] * RETAKE_SAVE_MOVE_DISTANCE;
+	fTarget[1] = g_fBotOrigin[iClient][1] + fAway[1] * RETAKE_SAVE_MOVE_DISTANCE;
+	fTarget[2] = g_fBotOrigin[iClient][2];
+
+	CNavArea pArea = NavMesh_GetNearestArea(fTarget, false, 1000.0, false, true, CS_TEAM_CT);
+	if (pArea == INVALID_NAV_AREA)
+		return BotTryToRetreat(iClient, RETAKE_SAVE_MOVE_DISTANCE, 1.0);
+
+	BotMoveTo(iClient, fTarget, RETREAT_ROUTE);
+	return true;
+}
+
+bool ShouldBlockDefuseForBombGuard(int iClient)
+{
+	if (!g_bBombPlanted || GetClientTeam(iClient) != CS_TEAM_CT)
+		return false;
+
+	if (GetTask(iClient) != DEFUSE_BOMB && GetEntProp(iClient, Prop_Send, "m_bIsDefusing") == 0)
+		return false;
+
+	float fC4Pos[3];
+	if (!GetPlantedBombPosition(fC4Pos))
+		return false;
+
+	return FindTerroristNearPlantedBomb(fC4Pos, BOMB_GUARD_CLEAR_RADIUS) != -1;
+}
+
+bool GetPlantedBombPosition(float fC4Pos[3])
+{
+	int iPlantedC4 = FindEntityByClassname(-1, "planted_c4");
+	if (!IsValidEntity(iPlantedC4))
+		return false;
+
+	GetEntPropVector(iPlantedC4, Prop_Send, "m_vecOrigin", fC4Pos);
+	return true;
+}
+
+int FindTerroristNearPlantedBomb(const float fC4Pos[3], float fRange)
+{
+	for (int i = 1; i <= MaxClients; i++)
+	{
+		if (!IsValidClient(i) || !IsPlayerAlive(i) || GetClientTeam(i) != CS_TEAM_T)
+			continue;
+
+		float fPos[3];
+		GetClientAbsOrigin(i, fPos);
+		if (GetVectorDistance(fPos, fC4Pos) < fRange)
+			return i;
 	}
 	return -1;
 }
