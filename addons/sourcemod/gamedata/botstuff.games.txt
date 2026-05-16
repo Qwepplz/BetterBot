@@ -270,6 +270,24 @@
 					}
 				}
 			}
+			"CCSBot::MoveTo"
+			{
+				"signature" "CCSBot::MoveTo"
+				"callconv" "thiscall"
+				"return" "void"
+				"this" "entity"
+				"arguments"
+				{
+					"pos"
+					{
+						"type" "vectorptr"
+					}
+					"route"
+					{
+						"type" "int"
+					}
+				}
+			}
 			"CCSBot::PickNewAimSpot"
 			{
 				"signature" "CCSBot::PickNewAimSpot"
