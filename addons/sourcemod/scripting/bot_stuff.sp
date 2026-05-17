@@ -726,6 +726,15 @@ public Action Timer_MoveToBomb(Handle hTimer, any data)
 		if (ShouldSaveInsteadOfRetake(i))
 			continue;
 
+		int iGuardThreat;
+		float fGuardThreatPos[3];
+		float fGuardC4Pos[3];
+		if (GetBombGuardThreat(i, iGuardThreat, fGuardThreatPos, fGuardC4Pos))
+		{
+			ClearBombGuardThreat(i, iGuardThreat, fGuardThreatPos);
+			continue;
+		}
+
 		bool bShouldMoveToBomb = (bLastManStanding && fDistanceToBomb > 30.0) || fDistanceToBomb > 2000.0;
 
 		if (bShouldMoveToBomb)
@@ -1918,11 +1927,8 @@ public Action OnPlayerRunCmd(int iClient, int &iButtons, int &iImpulse, float fV
 		}
 	}
 
-	if (g_bIsProBot[iClient] && ShouldBlockDefuseForBombGuard(iClient))
-	{
-		iButtons &= ~IN_USE;
-		BotEquipBestWeapon(iClient, true);
-	}
+	if (g_bIsProBot[iClient])
+		ProcessBombGuardClearBehavior(iClient, iButtons);
 
 	if (g_bIsProBot[iClient] && GetDisposition(iClient) != IGNORE_ENEMIES)
 		ProcessCombat(iClient, iButtons, fVel, fAngles, iDefIndex, fSpeed, fNow);
@@ -2653,7 +2659,7 @@ public void LoadDetours()
 	}
 
 	SetupDetour(hConf, "CCSBot::SetLookAt", Hook_Pre, CCSBot_SetLookAt);
-	SetupDetour(hConf, "CCSBot::MoveTo", Hook_Pre, CCSBot_MoveTo);
+	SetupOptionalDetour(hConf, "CCSBot::MoveTo", Hook_Pre, CCSBot_MoveTo);
 	SetupDetour(hConf, "CCSBot::PickNewAimSpot", Hook_Post, CCSBot_PickNewAimSpot);
 	SetupDetour(hConf, "BotCOS", Hook_Pre, BotCOSandSIN);
 	SetupDetour(hConf, "BotSIN", Hook_Pre, BotCOSandSIN);
@@ -3050,6 +3056,13 @@ void ProcessRetakeSaveBehavior(int iClient, int &iButtons)
 	if (GetClientTeam(iClient) == CS_TEAM_CT)
 		SetEntData(iClient, g_iBotTaskOffset, HOLD_POSITION);
 
+	float fLookTarget[3];
+	if (GetLiveEnemyCenter(iClient, fLookTarget))
+	{
+		fLookTarget[2] += HalfHumanHeight;
+		BotSetLookAt(iClient, "Save hold watch", fLookTarget, PRIORITY_MEDIUM, 0.5, false, 20.0, false);
+	}
+
 	iButtons &= ~(IN_FORWARD | IN_BACK | IN_MOVELEFT | IN_MOVERIGHT | IN_JUMP | IN_SPEED);
 	iButtons |= IN_DUCK;
 }
@@ -3109,19 +3122,62 @@ bool IsTCarryingC4NearBombsite(int iClient)
 	return GetVectorDistance(fClientPos, fBombPos) <= RETAKE_SAVE_PLANT_DISTANCE;
 }
 
-bool ShouldBlockDefuseForBombGuard(int iClient)
+bool ProcessBombGuardClearBehavior(int iClient, int &iButtons)
 {
+	int iThreat;
+	float fThreatPos[3];
+	float fC4Pos[3];
+	if (!GetBombGuardThreat(iClient, iThreat, fThreatPos, fC4Pos))
+		return false;
+
+	TaskType eTask = GetTask(iClient);
+	float fDistanceToC4 = GetVectorDistance(g_fBotOrigin[iClient], fC4Pos);
+	bool bDefuseCommitted = (eTask == DEFUSE_BOMB || eTask == FIND_TICKING_BOMB || GetEntProp(iClient, Prop_Send, "m_bIsDefusing") != 0 || fDistanceToC4 <= BOMB_GUARD_CLEAR_RADIUS);
+	if (!bDefuseCommitted)
+		return false;
+
+	iButtons &= ~IN_USE;
+	ClearBombGuardThreat(iClient, iThreat, fThreatPos);
+	return true;
+}
+
+bool GetBombGuardThreat(int iClient, int &iThreat, float fThreatPos[3], float fC4Pos[3])
+{
+	iThreat = -1;
 	if (!g_bBombPlanted || GetClientTeam(iClient) != CS_TEAM_CT)
 		return false;
 
-	if (GetTask(iClient) != DEFUSE_BOMB && GetEntProp(iClient, Prop_Send, "m_bIsDefusing") == 0)
+	if (GetTask(iClient) == ESCAPE_FROM_BOMB || GetTask(iClient) == ESCAPE_FROM_FLAMES)
 		return false;
 
-	float fC4Pos[3];
 	if (!GetPlantedBombPosition(fC4Pos))
 		return false;
 
-	return FindTerroristNearPlantedBomb(fC4Pos, BOMB_GUARD_CLEAR_RADIUS) != -1;
+	iThreat = FindTerroristNearPlantedBomb(fC4Pos, BOMB_GUARD_CLEAR_RADIUS, fThreatPos);
+	return iThreat != -1;
+}
+
+void ClearBombGuardThreat(int iClient, int iThreat, const float fThreatPos[3])
+{
+	if (!IsValidClient(iThreat) || !IsPlayerAlive(iThreat))
+		return;
+
+	SetDisposition(iClient, ENGAGE_AND_INVESTIGATE);
+	BotEquipBestWeapon(iClient, true);
+
+	float fLookPos[3];
+	Array_Copy(fThreatPos, fLookPos, 3);
+	fLookPos[2] += HalfHumanHeight;
+	BotSetLookAt(iClient, "Clear bomb guard", fLookPos, PRIORITY_HIGH, 0.5, false, 20.0, true);
+
+	float fEyePos[3];
+	GetClientEyePosition(iClient, fEyePos);
+	if (!IsPointVisible(fEyePos, fLookPos) && GetVectorDistance(g_fBotOrigin[iClient], fThreatPos) > 150.0)
+	{
+		float fMovePos[3];
+		Array_Copy(fThreatPos, fMovePos, 3);
+		BotMoveTo(iClient, fMovePos, FASTEST_ROUTE);
+	}
 }
 
 bool GetPlantedBombPosition(float fC4Pos[3])
@@ -3158,8 +3214,10 @@ bool GetNearestBombsitePosition(int iClient, float fBombPos[3])
 	return bFound;
 }
 
-int FindTerroristNearPlantedBomb(const float fC4Pos[3], float fRange)
+int FindTerroristNearPlantedBomb(const float fC4Pos[3], float fRange, float fThreatPos[3])
 {
+	int iBestThreat = -1;
+	float fBestDistance = fRange;
 	for (int i = 1; i <= MaxClients; i++)
 	{
 		if (!IsValidClient(i) || !IsPlayerAlive(i) || GetClientTeam(i) != CS_TEAM_T)
@@ -3167,10 +3225,15 @@ int FindTerroristNearPlantedBomb(const float fC4Pos[3], float fRange)
 
 		float fPos[3];
 		GetClientAbsOrigin(i, fPos);
-		if (GetVectorDistance(fPos, fC4Pos) < fRange)
-			return i;
+		float fDistance = GetVectorDistance(fPos, fC4Pos);
+		if (fDistance < fBestDistance)
+		{
+			fBestDistance = fDistance;
+			iBestThreat = i;
+			Array_Copy(fPos, fThreatPos, 3);
+		}
 	}
-	return -1;
+	return iBestThreat;
 }
 
 bool IsEnemyNearBomb()
@@ -3234,9 +3297,29 @@ void TryPickupWeapon(int iClient, const char[] szClassname, const int[] iSkipLis
 stock void SetupDetour(GameData hGameData, const char[] szConf, HookMode eMode, DHookCallback hCallback)
 {
 	DynamicDetour hDetour = DynamicDetour.FromConf(hGameData, szConf);
-	if (!hDetour.Enable(eMode, hCallback))
+	if (hDetour == null || !hDetour.Enable(eMode, hCallback))
 		SetFailState("Failed to setup detour for %s", szConf);
 	delete hDetour;
+}
+
+stock bool SetupOptionalDetour(GameData hGameData, const char[] szConf, HookMode eMode, DHookCallback hCallback)
+{
+	DynamicDetour hDetour = DynamicDetour.FromConf(hGameData, szConf);
+	if (hDetour == null)
+	{
+		LogError("Optional detour %s is unavailable; related behavior will degrade gracefully.", szConf);
+		return false;
+	}
+
+	if (!hDetour.Enable(eMode, hCallback))
+	{
+		LogError("Optional detour %s failed to enable; related behavior will degrade gracefully.", szConf);
+		delete hDetour;
+		return false;
+	}
+
+	delete hDetour;
+	return true;
 }
 
 stock int SetupOffset(GameData hGameConfig, const char[] szName)

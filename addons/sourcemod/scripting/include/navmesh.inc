@@ -17,7 +17,7 @@
 #define WALK_THRU_TOGGLE_BRUSHES	0x08
 #define WALK_THRU_EVERYTHING		(WALK_THRU_DOORS | WALK_THRU_BREAKABLES | WALK_THRU_TOGGLE_BRUSHES)
 
-enum 
+enum
 {
 	NAV_DIR_NORTH = 0,
 	NAV_DIR_EAST,
@@ -35,17 +35,17 @@ enum
 
 enum
 {
-	NAV_MESH_CROUCH = 0x0001, 
-	NAV_MESH_JUMP = 0x0002, 
-	NAV_MESH_PRECISE = 0x0004, 
-	NAV_MESH_NO_JUMP = 0x0008, 
-	NAV_MESH_STOP = 0x0010, 
-	NAV_MESH_RUN = 0x0020, 
-	NAV_MESH_WALK = 0x0040, 
-	NAV_MESH_AVOID = 0x0080, 
-	NAV_MESH_TRANSIENT = 0x0100, 
-	NAV_MESH_DONT_HIDE = 0x0200, 
-	NAV_MESH_STAND = 0x0400, 
+	NAV_MESH_CROUCH = 0x0001,
+	NAV_MESH_JUMP = 0x0002,
+	NAV_MESH_PRECISE = 0x0004,
+	NAV_MESH_NO_JUMP = 0x0008,
+	NAV_MESH_STOP = 0x0010,
+	NAV_MESH_RUN = 0x0020,
+	NAV_MESH_WALK = 0x0040,
+	NAV_MESH_AVOID = 0x0080,
+	NAV_MESH_TRANSIENT = 0x0100,
+	NAV_MESH_DONT_HIDE = 0x0200,
+	NAV_MESH_STAND = 0x0400,
 	NAV_MESH_NO_HOSTAGES = 0x0800
 };
 
@@ -82,7 +82,7 @@ typedef NavPathCostFunctor = function int(CNavArea area, CNavArea from, CNavLadd
 /**
  * Called when the plugin finishes loading the navigation mesh, even if it fails. Called within the
  * OnMapStart() forward.
- * 
+ *
  * @param success		true if sucessful, false otherwise.
  */
 forward void OnNavMeshLoaded(bool success);
@@ -123,7 +123,7 @@ native int NavMesh_GetGridSizeX();
 native int NavMesh_GetGridSizeY();
 
 
-native void NavMesh_CollectSurroundingAreas(ArrayStack hStack, CNavArea startArea, float travelDistLimit=1500.0, float maxStepUpLimit=StepHeight, float maxDropDownLimit=100.0);
+native ArrayStack NavMesh_CollectSurroundingAreas(CNavArea startArea, float travelDistLimit=1500.0, float maxStepUpLimit=StepHeight, float maxDropDownLimit=100.0);
 
 native bool NavMesh_BuildPath(CNavArea startArea, CNavArea goalArea, const float goalPos[3], NavPathCostFunctor costFunctor, any costData=0, CNavArea &closestArea=INVALID_NAV_AREA, float maxPathLength=0.0, float flMaxStepSize=0.0);
 
@@ -206,89 +206,89 @@ methodmap CNavArea
 	{
 		return view_as<CNavArea>(index);
 	}
-	
+
 	property int Index
 	{
 		public get() { return view_as<int>(this); }
 	}
-	
+
 	property int ID
 	{
 		public get() { return NavMeshArea_GetID(this.Index); }
 	}
-	
+
 	property int Attributes
 	{
 		public get() { return NavMeshArea_GetFlags(this.Index); }
 	}
-	
+
 	property CNavArea Parent
 	{
 		public get() { return CNavArea(NavMeshArea_GetParent(this.Index)); }
 		public set( CNavArea area ) { NavMeshArea_SetParent(this.Index, area.Index); }
 	}
-	
+
 	property int ParentHow
 	{
 		public get() { return NavMeshArea_GetParentHow(this.Index); }
 		public set( int how ) { NavMeshArea_SetParentHow(this.Index, how); }
 	}
-	
+
 	property int TotalCost
 	{
 		public get() { return NavMeshArea_GetTotalCost(this.Index); }
 	}
-	
+
 	property int CostSoFar
 	{
 		public get() { return NavMeshArea_GetCostSoFar(this.Index); }
 	}
-	
+
 	property float NECornerZ
 	{
 		public get() { return NavMeshArea_GetNECornerZ(this.Index); }
 	}
-	
+
 	property float SWCornerZ
 	{
 		public get() { return NavMeshArea_GetSWCornerZ(this.Index); }
 	}
-	
+
 	public void GetPlace( char[] buffer, int maxlen )
 	{
 		NavMeshArea_GetPlace(this.Index, buffer, maxlen);
 	}
-	
+
 	public bool GetCenter( float buffer[3] )
 	{
 		return NavMeshArea_GetCenter(this.Index, buffer);
 	}
-	
+
 	public bool GetExtentLow( float buffer[3] )
 	{
 		return NavMeshArea_GetExtentLow(this.Index, buffer);
 	}
-	
+
 	public bool GetExtentHigh( float buffer[3] )
 	{
 		return NavMeshArea_GetExtentHigh(this.Index, buffer);
 	}
-	
+
 	public void GetCorner( NavCornerType corner, float buffer[3] )
 	{
 		NavMeshArea_GetCorner( this.Index, corner, buffer );
 	}
-	
+
 	public float GetZ( const float point[3] )
 	{
 		return NavMeshArea_GetZ(this.Index, point);
 	}
-	
+
 	public float GetZFromXAndY( float x, float y )
 	{
 		return NavMeshArea_GetZFromXAndY(this.Index, x, y);
 	}
-	
+
 	/**
 	 * Returns whether or not the area overlaps the given point. The Z-axis is not checked.
 	 *
@@ -300,7 +300,7 @@ methodmap CNavArea
 	{
 		return NavMeshArea_IsOverlappingPoint(this.Index, point, tolerance);
 	}
-	
+
 	/**
 	 * Returns whether or not the area overlaps the given area. The Z-axis is not checked.
 	 *
@@ -311,11 +311,11 @@ methodmap CNavArea
 	{
 		return NavMeshArea_IsOverlappingArea(this.Index, area.Index);
 	}
-	
+
 	/**
 	 * Returns whether or not the given point is contained by the area.
 	 *
-	 * Note: If the point overlaps the area, the given point can be at most StepHeight units above the 
+	 * Note: If the point overlaps the area, the given point can be at most StepHeight units above the
 	 * area to still be considered "contained".
 	 *
 	 * @param	point	The point to check.
@@ -325,10 +325,10 @@ methodmap CNavArea
 	{
 		return NavMeshArea_Contains(this.Index, point);
 	}
-	
+
 	/**
 	 * Returns whether or not if there are no bi-directional links in the given direction of the area.
-	 * 
+	 *
 	 * Note: For the longest time this only checked for presence of an outgoing connection, regardless
 	 * if the connection was two-way or not. This has been recently changed to properly reflect
 	 * CNavArea::IsEdge( NavDirType dir )'s functionality.
@@ -340,12 +340,12 @@ methodmap CNavArea
 	{
 		return NavMeshArea_IsEdge(this.Index, dir);
 	}
-	
+
 	public void GetRandomPoint( float buffer[3] )
 	{
 		NavMeshArea_GetRandomPoint(this.Index, buffer);
 	}
-	
+
 	/**
 	 * Returns whether or not there exists a bi-directional/outgoing one-way link to targetArea in
 	 * the provided direction.
@@ -358,12 +358,12 @@ methodmap CNavArea
 	{
 		return NavMeshArea_IsConnected(this.Index, targetArea.Index, dir);
 	}
-	
+
 	public void GetClosestPointOnArea( const float pos[3], float buffer[3] )
 	{
 		NavMeshArea_GetClosestPointOnArea(this.Index, pos, buffer);
 	}
-	
+
 	/**
 	 * Retrieves all bi-directional and one-way OUTGOING connections from this area and stores CNavArea's in the
 	 * provided buffer.
@@ -390,7 +390,7 @@ methodmap CNavArea
 	 * @param	buffer	An ArrayList to insert the CNavArea's in.
 	 */
 	public native void GetAdjacentList( int dir, ArrayList buffer );
-	
+
 	public CNavArea GetRandomAdjacentArea( int dir )
 	{
 		ArrayList list = new ArrayList();
@@ -427,32 +427,32 @@ methodmap CNavArea
 	 * @param	buffer	An ArrayList to insert the CNavArea's in.
 	 */
 	public native void GetIncomingConnections( int dir, ArrayList buffer );
-	
+
 	public void GetLadders( int dir, ArrayStack buffer )
 	{
 		NavMeshArea_GetLadderList( buffer, this.Index, dir );
 	}
-	
+
 	public void GetHidingSpots( ArrayStack buffer )
 	{
 		NavMeshArea_GetHidingSpots( buffer, this.Index );
 	}
-	
+
 	public void ComputePortal( CNavArea to, int dir, float center[3], float &halfWidth )
 	{
 		NavMeshArea_ComputePortal(this.Index, to.Index, dir, center, halfWidth);
 	}
-	
+
 	public void ComputeClosestPointInPortal( CNavArea to, int dir, const float fromPos[3], float closePos[3] )
 	{
 		NavMeshArea_ComputeClosestPointInPortal(this.Index, to.Index, dir, fromPos, closePos);
 	}
-	
+
 	public int ComputeDirection( const float point[3] )
 	{
 		return NavMeshArea_ComputeDirection(this.Index, point);
 	}
-	
+
 	public float GetLightIntensity( const float point[3] )
 	{
 		return NavMeshArea_GetLightIntensity(this.Index, point);
@@ -484,10 +484,10 @@ enum
 	TF_NAV_BLUE_ONE_WAY_DOOR			= 0x00008000,
 	TF_NAV_RED_ONE_WAY_DOOR				= 0x00010000,
 
- 	TF_NAV_WITH_SECOND_POINT			= 0x00020000,
- 	TF_NAV_WITH_THIRD_POINT				= 0x00040000,
-  	TF_NAV_WITH_FOURTH_POINT			= 0x00080000,
- 	TF_NAV_WITH_FIFTH_POINT				= 0x00100000,
+	TF_NAV_WITH_SECOND_POINT			= 0x00020000,
+	TF_NAV_WITH_THIRD_POINT				= 0x00040000,
+	TF_NAV_WITH_FOURTH_POINT			= 0x00080000,
+	TF_NAV_WITH_FIFTH_POINT				= 0x00100000,
 
 	TF_NAV_SNIPER_SPOT					= 0x00200000,			// this is a good place for a sniper to lurk
 	TF_NAV_SENTRY_SPOT					= 0x00400000,			// this is a good place to build a sentry
@@ -497,9 +497,9 @@ enum
 
 	TF_NAV_NO_SPAWNING					= 0x02000000,			// don't spawn bots in this area
 
- 	TF_NAV_RESCUE_CLOSET				= 0x04000000,			// for respawning friends in Raid mode
+	TF_NAV_RESCUE_CLOSET				= 0x04000000,			// for respawning friends in Raid mode
 
- 	TF_NAV_BOMB_CAN_DROP_HERE			= 0x08000000,			// the bomb can be dropped here and reached by the invaders in MvM
+	TF_NAV_BOMB_CAN_DROP_HERE			= 0x08000000,			// the bomb can be dropped here and reached by the invaders in MvM
 
 	TF_NAV_DOOR_NEVER_BLOCKS			= 0x10000000,
 	TF_NAV_DOOR_ALWAYS_BLOCKS			= 0x20000000,
@@ -596,47 +596,47 @@ methodmap HidingSpot
 	{
 		return view_as<HidingSpot>(index);
 	}
-	
+
 	property int Index
 	{
 		public get() { return view_as<int>(this); }
 	}
-	
+
 	property int ID
 	{
 		public get() { return NavHidingSpot_GetID( this.Index ); }
 	}
-	
+
 	property int Flags
 	{
 		public get() { return NavHidingSpot_GetFlags( this.Index ); }
 	}
-	
+
 	public void GetPosition( float buffer[3] )
 	{
 		NavHidingSpot_GetPosition( this.Index, buffer );
 	}
-	
+
 	public bool HasGoodCover()
 	{
 		return this.Flags & NAV_HIDING_SPOT_IN_COVER ? true : false;
 	}
-	
+
 	public bool IsGoodSniperSpot()
 	{
 		return this.Flags & NAV_HIDING_SPOT_GOOD_SNIPER_SPOT ? true : false;
 	}
-	
+
 	public bool IsIdealSniperSpot()
 	{
 		return this.Flags & NAV_HIDING_SPOT_IDEAL_SNIPER_SPOT ? true : false;
 	}
-	
+
 	public bool IsExposed()
 	{
 		return this.Flags & NAV_HIDING_SPOT_EXPOSED ? true : false;
 	}
-	
+
 	public CNavArea GetArea()
 	{
 		return NavHidingSpot_GetArea(this.Index);
@@ -670,52 +670,52 @@ methodmap CNavLadder
 	{
 		return view_as<CNavLadder>(index);
 	}
-	
+
 	property int Index
 	{
 		public get() { return view_as<int>(this); }
 	}
-	
+
 	property float Length
 	{
 		public get() { return NavMeshLadder_GetLength(this.Index); }
 	}
-	
+
 	property float Width
 	{
 		public get() { return NavMeshLadder_GetWidth(this.Index); }
 	}
-	
+
 	property CNavArea TopForwardArea
 	{
 		public get() { return NavMeshLadder_GetTopForwardArea(this.Index); }
 	}
-	
+
 	property CNavArea TopLeftArea
 	{
 		public get() { return NavMeshLadder_GetTopLeftArea(this.Index); }
 	}
-	
+
 	property CNavArea TopRightArea
 	{
 		public get() { return NavMeshLadder_GetTopRightArea(this.Index); }
 	}
-	
+
 	property CNavArea TopBehindArea
 	{
 		public get() { return NavMeshLadder_GetTopBehindArea(this.Index); }
 	}
-	
+
 	property CNavArea BottomArea
 	{
 		public get() { return NavMeshLadder_GetBottomArea(this.Index); }
 	}
-	
+
 	public void GetTop( float buffer[3] )
 	{
 		NavMeshLadder_GetTop(this.Index, buffer);
 	}
-	
+
 	public void GetBottom( float buffer[3] )
 	{
 		NavMeshLadder_GetBottom(this.Index, buffer);
@@ -741,32 +741,32 @@ methodmap SpotEncounter
 	{
 		return view_as<SpotEncounter>(index);
 	}
-	
+
 	property int Index
 	{
 		public get() { return view_as<int>(this); }
 	}
-	
+
 	property CNavArea From
 	{
 		public get() { return NavSpotEncounter_GetFrom(this.Index); }
 	}
-	
+
 	property int FromDirection
 	{
 		public get() { return NavSpotEncounter_GetFromDirection(this.Index); }
 	}
-	
+
 	property CNavArea To
 	{
 		public get() { return NavSpotEncounter_GetTo(this.Index); }
 	}
-	
+
 	property int ToDirection
 	{
 		public get() { return NavSpotEncounter_GetToDirection(this.Index); }
 	}
-	
+
 	public void GetSpots( ArrayStack buffer )
 	{
 		NavSpotEncounter_GetSpots(this.Index, buffer);
@@ -786,17 +786,17 @@ methodmap SpotOrder
 	{
 		return view_as<SpotOrder>(index);
 	}
-	
+
 	property int Index
 	{
 		public get() { return view_as<int>(this); }
 	}
-	
+
 	property HidingSpot HidingSpot
 	{
 		public get() { return NavSpotOrder_GetHidingSpot(this.Index); }
 	}
-	
+
 	property int ParametricDistance
 	{
 		public get() { return NavSpotOrder_GetParametricDistance(this.Index); }
@@ -823,10 +823,10 @@ public int NavMeshShortestPathCost(CNavArea area, CNavArea from, CNavLadder ladd
 			float flAreaCenter[3]; float flFromAreaCenter[3];
 			area.GetCenter(flAreaCenter);
 			from.GetCenter(flFromAreaCenter);
-			
+
 			iDist = RoundFloat(GetVectorDistance(flAreaCenter, flFromAreaCenter));
 		}
-		
+
 		int iCost = iDist + from.CostSoFar;
 		int iAreaFlags = area.Attributes;
 		if (iAreaFlags & NAV_MESH_CROUCH) iCost += 20;
@@ -841,24 +841,24 @@ stock bool IsEntityWalkable(int iEnt, int iFlags)
 {
 	char sClass[64];
 	GetEntityClassname(iEnt, sClass, sizeof(sClass));
-	
+
 	if (!strcmp(sClass, "worldspawn")) return false;
 	if (!strcmp(sClass, "player")) return false;
-	
+
 	if (!strcmp(sClass, "func_door*"))
 	{
 		return (iFlags & WALK_THRU_PROP_DOORS) ? true : false;
 	}
-	
+
 	if (!strcmp(sClass, "prop_door*"))
 	{
 		return (iFlags & WALK_THRU_PROP_DOORS) ? true : false;
 	}
-	
+
 	if (!strcmp(sClass, "func_brush"))
 	{
 		int iSolidity = GetEntProp(iEnt, Prop_Data, "m_iSolidity");
-		
+
 		switch (iSolidity)
 		{
 			case 2: // BRUSHSOLID_ALWAYS
@@ -874,20 +874,20 @@ stock bool IsEntityWalkable(int iEnt, int iFlags)
 				return (iFlags & WALK_THRU_TOGGLE_BRUSHES) ? true : false;
 			}
 		}
-		
+
 		return (iFlags & WALK_THRU_PROP_DOORS) ? true : false;
 	}
-	
+
 	if (!strcmp(sClass, "func_breakable") && GetEntProp(iEnt, Prop_Data, "m_iHealth") && GetEntProp(iEnt, Prop_Data, "m_takedamage") == 2) // DAMAGE_YES
 	{
 		return (iFlags & WALK_THRU_BREAKABLES) ? true : false;
 	}
-	
+
 	if (!strcmp(sClass, "func_playerinfected_clip"))
 	{
 		return true;
 	}
-	
+
 	return false;
 }
 
@@ -897,11 +897,11 @@ stock bool IsWalkableTraceLineClear(const float flFrom[3], const float flTo[3], 
 	flUseFrom[0] = flFrom[0];
 	flUseFrom[1] = flFrom[1];
 	flUseFrom[2] = flFrom[2];
-	
+
 	Handle hTrace;
-	
+
 	float flFraction = 0.0;
-	
+
 	for (int t = 0; t < 50; t++)
 	{
 		hTrace = TR_TraceRayFilterEx(flUseFrom, flTo, MASK_NPCSOLID, RayType_EndPoint, TraceFilterWalkableEntities, iFlags);
@@ -910,7 +910,7 @@ stock bool IsWalkableTraceLineClear(const float flFrom[3], const float flTo[3], 
 		float flResPos[3];
 		TR_GetEndPosition(flResPos, hTrace);
 		delete hTrace;
-		
+
 		if (flFraction != 1.0 && IsEntityWalkable(iResEnt, iFlags))
 		{
 			float flDir[3];
@@ -924,9 +924,9 @@ stock bool IsWalkableTraceLineClear(const float flFrom[3], const float flTo[3], 
 			break;
 		}
 	}
-	
+
 	if (flFraction == 1.0) return true;
-	
+
 	return false;
 }
 
@@ -936,7 +936,7 @@ public bool TraceFilterWalkableEntities(int entity, int mask, any iFlags)
 }
 
 
-public SharedPlugin __pl_navmesh = 
+public SharedPlugin __pl_navmesh =
 {
 	name = "navmesh",
 	file = "navmesh.smx",
