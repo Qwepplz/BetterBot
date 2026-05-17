@@ -550,7 +550,7 @@ bool NavMeshBuildPath(int iStartAreaIndex,
 	int iGoalAreaIndex,
 	const float flGoalPos[3],
 	Handle hCostFunctionPlugin,
-	NavPathCostFunctor iCostFunction,
+	Function iCostFunction,
 	any iCostData=0,
 	int &iClosestAreaIndex=-1,
 	float flMaxPathLength=0.0,
@@ -1811,6 +1811,7 @@ bool NavMeshLoad(const char[] sMapName)
 
 bool NavMeshLoadPlaceDirectory(File hFile, int iNavVersion, int iNavSubVersion)
 {
+	if (iNavSubVersion == -2147483648) {}
 	if (iNavVersion >= 5)
 	{
 		int iPlaceCount = 0;
@@ -1838,7 +1839,11 @@ bool NavMeshLoadPlaceDirectory(File hFile, int iNavVersion, int iNavSubVersion)
 			ReadFileCell(hFile, iNavUnnamedAreas, UNSIGNED_CHAR_BYTE_SIZE);
 			LogMessage("Has unnamed areas: %s", iNavUnnamedAreas ? "true" : "false");
 		}
+	
+		return true;
 	}
+
+	return false;
 }
 
 int NavMeshLoadHidingSpot(File hFile, int iOwnerAreaIndex)
@@ -1873,6 +1878,8 @@ int NavMeshLoadHidingSpot(File hFile, int iOwnerAreaIndex)
 // Loads game-specific custom data for the mesh before areas are parsed.
 bool NavMeshLoadCustomDataPreArea(File hFile, int iNavVersion, int iNavSubVersion)
 {
+	if (iNavVersion == -2147483648) {}
+	if (iNavSubVersion == -2147483648) {}
 	switch (GetEngineVersion())
 	{
 		// Insert other game-specific data stored in the mesh here.
@@ -1912,6 +1919,8 @@ bool NavMeshLoadCustomDataPreArea(File hFile, int iNavVersion, int iNavSubVersio
 // Loads game-specific custom data.
 bool NavMeshLoadAreaCustomData(File hFile, int iAreaIndex, int iNavVersion, int iNavSubVersion)
 {
+	if (iNavVersion == -2147483648) {}
+	if (iNavSubVersion == -2147483648) {}
 	switch (GetEngineVersion())
 	{
 		// Insert other game-specific data stored in the area here.
@@ -2173,6 +2182,8 @@ bool NavMeshLoadLadder(File hFile, int iLadderIndex)
 // Loads game-specific custom data.
 bool NavMeshLoadCustomData(File hFile, int iNavVersion, int iNavSubVersion)
 {
+	if (iNavVersion == -2147483648) {}
+	if (iNavSubVersion == -2147483648) {}
 	switch (GetEngineVersion())
 	{
 		// Insert other game-specific data stored in the mesh here.
@@ -2442,6 +2453,7 @@ stock ArrayStack NavMeshGridGetAreas(x, y)
 
 stock int NavMeshGetNearestArea(float flPos[3], bool bAnyZ=false, float flMaxDist=10000.0, bool bCheckLOS=false, bool bCheckGround=true, int iTeam=-2)
 {
+	if (bAnyZ && iTeam == -2147483648) {}
 	if (g_hNavMeshGridLists.Length == 0) return -1;
 	
 	int iClosestAreaIndex = -1;
@@ -3624,6 +3636,8 @@ public int Native_NavMeshCollectSurroundingAreas(Handle plugin, int numParams)
 		
 		delete hDummy;
 	}
+
+	return 0;
 }
 
 public int Native_NavMeshBuildPath(Handle plugin, int numParams)
@@ -3637,7 +3651,7 @@ public int Native_NavMeshBuildPath(Handle plugin, int numParams)
 		view_as<int>(GetNativeCell(2)), 
 		flGoalPos,
 		plugin,
-		view_as<NavPathCostFunctor>(GetNativeFunction(4)),
+		view_as<Function>(GetNativeFunction(4)),
 		GetNativeCell(5),
 		iClosestIndex,
 		view_as<float>(GetNativeCell(7)),
@@ -3699,6 +3713,8 @@ public int Native_NavMeshGridGetAreas(Handle plugin, int numParams)
 		
 		delete hDummy;
 	}
+
+	return 0;
 }
 
 public int Native_NavMeshGetGridSizeX(Handle plugin, int numParams)
@@ -3717,6 +3733,8 @@ public int Native_NavMeshAreaGetClosestPointOnArea(Handle plugin, int numParams)
 	GetNativeArray(2, flPos, 3);
 	NavMeshAreaGetClosestPointOnArea(GetNativeCell(1), flPos, flClose);
 	SetNativeArray(3, flClose, 3);
+
+	return 0;
 }
 
 public int Native_NavMeshGetGroundHeight(Handle plugin, int numParams)
@@ -3746,6 +3764,8 @@ public int Native_NavMeshAreaGetMasterMarker(Handle plugin, int numParams)
 public int Native_NavMeshAreaChangeMasterMarker(Handle plugin, int numParams)
 {
 	g_iNavMeshAreaMasterMarker++;
+
+	return 0;
 }
 
 public int Native_NavMeshAreaGetID(Handle plugin, int numParams)
@@ -3765,6 +3785,8 @@ public int Native_NavMeshAreaGetPlace(Handle plugin, int numParams)
 	GetNativeString(2, buffer, maxlen);
 	NavMeshAreaGetPlace(GetNativeCell(1), buffer, maxlen);
 	SetNativeString(2, buffer, maxlen);
+
+	return 0;
 }
 
 public int Native_NavMeshAreaGetCenter(Handle plugin, int numParams)
@@ -3795,6 +3817,8 @@ public int Native_NavMeshAreaGetAdjacentList(Handle plugin, int numParams)
 		
 		delete hDummy;
 	}
+
+	return 0;
 }
 
 public int Native_NavMeshAreaGetAdjacentAreas(Handle plugin, int numParams)
@@ -3804,7 +3828,7 @@ public int Native_NavMeshAreaGetAdjacentAreas(Handle plugin, int numParams)
 	ArrayList hTarget = view_as<ArrayList>(GetNativeCell(3));
 
 	int iConnectionsStartIndex = g_hNavMeshAreas.Get(iAreaIndex, NavMeshArea_ConnectionsStartIndex);
-	if (iConnectionsStartIndex == -1) return;
+	if (iConnectionsStartIndex == -1) return 0;
 	
 	int iConnectionsEndIndex = g_hNavMeshAreas.Get(iAreaIndex, NavMeshArea_ConnectionsEndIndex);
 	
@@ -3819,6 +3843,8 @@ public int Native_NavMeshAreaGetAdjacentAreas(Handle plugin, int numParams)
 		
 		hTarget.Push(iToAreaIndex);
 	}
+
+	return 0;
 }
 
 public int Native_NavMeshAreaGetIncomingConnections(Handle plugin, int numParams)
@@ -3828,7 +3854,7 @@ public int Native_NavMeshAreaGetIncomingConnections(Handle plugin, int numParams
 	ArrayList hTarget = view_as<ArrayList>(GetNativeCell(3));
 
 	int iConnectionsStartIndex = g_hNavMeshAreas.Get(iAreaIndex, NavMeshArea_IncomingConnectionsStartIndex);
-	if (iConnectionsStartIndex == -1) return;
+	if (iConnectionsStartIndex == -1) return 0;
 	
 	int iConnectionsEndIndex = g_hNavMeshAreas.Get(iAreaIndex, NavMeshArea_IncomingConnectionsEndIndex);
 	
@@ -3843,6 +3869,8 @@ public int Native_NavMeshAreaGetIncomingConnections(Handle plugin, int numParams
 		
 		hTarget.Push(iFromAreaIndex);
 	}
+
+	return 0;
 }
 
 public int Native_NavMeshAreaGetLadderList(Handle plugin, int numParams)
@@ -3861,6 +3889,8 @@ public int Native_NavMeshAreaGetLadderList(Handle plugin, int numParams)
 		
 		delete hDummy;
 	}
+
+	return 0;
 }
 
 public int Native_NavMeshAreaGetHidingSpots(Handle plugin, int numParams)
@@ -3879,6 +3909,8 @@ public int Native_NavMeshAreaGetHidingSpots(Handle plugin, int numParams)
 		
 		delete hDummy;
 	}
+
+	return 0;
 }
 
 public int Native_NavMeshAreaGetTotalCost(Handle plugin, int numParams)
@@ -3904,11 +3936,15 @@ public int Native_NavMeshAreaGetParentHow(Handle plugin, int numParams)
 public int Native_NavMeshAreaSetParent(Handle plugin, int numParams)
 {
 	NavMeshAreaSetParent(GetNativeCell(1), GetNativeCell(2));
+
+	return 0;
 }
 
 public int Native_NavMeshAreaSetParentHow(Handle plugin, int numParams)
 {
 	NavMeshAreaSetParentHow(GetNativeCell(1), GetNativeCell(2));
+
+	return 0;
 }
 
 public int Native_NavMeshAreaGetExtentLow(Handle plugin, int numParams)
@@ -3964,6 +4000,8 @@ public int Native_NavMeshAreaGetCorner(Handle plugin, int numParams)
 	GetNativeArray(3, buffer, 3);
 	NavMeshAreaGetCorner(GetNativeCell(1), view_as<NavCornerType>(GetNativeCell(2)), buffer);
 	SetNativeArray(3, buffer, 3);
+
+	return 0;
 }
 
 public int Native_NavMeshAreaGetZ(Handle plugin, int numParams)
@@ -3998,6 +4036,8 @@ public int Native_NavMeshAreaGetRandomPoint(Handle plugin, int numParams)
 	GetNativeArray(2, buffer, 3);
 	NavMeshAreaGetRandomPoint(GetNativeCell(1), buffer);
 	SetNativeArray(2, buffer, 3);
+
+	return 0;
 }
 
 public int Native_NavMeshAreaComputePortal(Handle plugin, int numParams)
@@ -4076,6 +4116,8 @@ public int Native_NavHidingSpotGetPosition(Handle plugin, int numParams)
 	buffer[2] = view_as<float>(g_hNavMeshAreaHidingSpots.Get(hidingSpotIndex, NavMeshHidingSpot_Z));
 	
 	SetNativeArray(2, buffer, 3);
+
+	return 0;
 }
 
 public int Native_NavHidingSpotGetArea(Handle plugin, int numParams)
@@ -4128,6 +4170,8 @@ public int Native_NavMeshLadderGetTop(Handle plugin, int numParams)
 	buffer[2] = view_as<float>(g_hNavMeshLadders.Get(GetNativeCell(1), NavMeshLadder_TopZ));
 	
 	SetNativeArray(2, buffer, 3);
+
+	return 0;
 }
 
 public int Native_NavMeshLadderGetBottom(Handle plugin, int numParams)
@@ -4140,6 +4184,8 @@ public int Native_NavMeshLadderGetBottom(Handle plugin, int numParams)
 	buffer[2] = view_as<float>(g_hNavMeshLadders.Get(GetNativeCell(1), NavMeshLadder_BottomZ));
 	
 	SetNativeArray(2, buffer, 3);
+
+	return 0;
 }
 
 public int Native_NavSpotEncounterGetFrom(Handle plugin, int numParams)
@@ -4176,6 +4222,8 @@ public int Native_NavSpotEncounterGetSpots(Handle plugin, int numParams)
 		}
 		delete dummy;
 	}
+
+	return 0;
 }
 
 public int Native_NavSpotOrderGetHidingSpot(Handle plugin, int numParams)
@@ -4196,14 +4244,14 @@ public int Native_TFNavAreaGetAttributeFlags(Handle plugin, int numParams)
 
 public int Native_CSNavAreaGetApproachInfoList(Handle plugin, int numParams)
 {
-	if (!g_bNavMeshBuilt) return;
+	if (!g_bNavMeshBuilt) return 0;
 
 	int areaIndex = GetNativeCell(1);
 	ArrayList buffer = view_as<ArrayList>(GetNativeCell(2));
 	
 	int startIndex = g_hNavMeshAreas.Get(areaIndex, CSNavArea_ApproachInfoStartIndex);
 	if ( startIndex == -1 )
-		return;
+		return 0;
 	
 	int endIndex = g_hNavMeshAreas.Get(areaIndex, CSNavArea_ApproachInfoEndIndex);
 	for (int i = startIndex; i <= endIndex; i++)
@@ -4212,16 +4260,20 @@ public int Native_CSNavAreaGetApproachInfoList(Handle plugin, int numParams)
 		g_hCSNavAreaApproachInfo.GetArray( i, approachInfo, sizeof(approachInfo) );
 		buffer.PushArray(approachInfo, sizeof(approachInfo));
 	}
+
+	return 0;
 }
 
 public int Native_TerrorNavMeshGetZombiePopulation(Handle plugin, int numParams)
 {
 	SetNativeString(2, g_TerrorNavMeshZombiePopulation, GetNativeCell(3));
+
+	return 0;
 }
 
 public int Native_TerrorNavMeshGetNavMaxViewDistance(Handle plugin, int numParams)
 {
-	return g_TerrorNavMeshNavMaxViewDistance;
+	return view_as<int>(g_TerrorNavMeshNavMaxViewDistance);
 }
 
 public int Native_TerrorNavAreaGetSpawnAttributes(Handle plugin, int numParams)
