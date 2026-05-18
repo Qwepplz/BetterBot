@@ -145,7 +145,6 @@ Handle g_hBotSetLookAt;
 Handle g_hSetCrosshairCode;
 Handle g_hSwitchWeaponCall;
 Handle g_hIsLineBlockedBySmoke;
-Handle g_hBotBendLineOfSight;
 Handle g_hBotThrowGrenade;
 Handle g_hAddMoney;
 Handle g_hOnAudibleEvent;
@@ -1160,17 +1159,15 @@ public void OnBombPlanted(Event eEvent, const char[] szName, bool bDontBroadcast
 
 public void OnBombDefused(Event eEvent, const char[] szName, bool bDontBroadcast)
 {
-	g_bBombPlanted = false;
-	g_bRoundDecided = true;
-
-	for (int i = 1; i <= MaxClients; i++)
-	{
-		if (IsValidClient(i) && IsFakeClient(i))
-			CancelClientActiveLineupActions(i, false);
-	}
+	OnBombResolved();
 }
 
 public void OnBombExploded(Event eEvent, const char[] szName, bool bDontBroadcast)
+{
+	OnBombResolved();
+}
+
+void OnBombResolved()
 {
 	g_bBombPlanted = false;
 	g_bRoundDecided = true;
@@ -1548,13 +1545,7 @@ public MRESReturn CCSBot_OnAudibleEvent(int iBot, DHookParam hParams)
 
 public MRESReturn CCSBot_CanSeeLooseBomb(int iClient, DHookReturn hReturn)
 {
-	if (!g_bBombPlanted && g_bIsBombScenario && g_bFreezetimeEnd && GetClientTeam(iClient) == CS_TEAM_T && ShouldSaveInsteadOfRetake(iClient))
-	{
-		hReturn.Value = false;
-		return MRES_Supercede;
-	}
-
-	if (!g_bBombPlanted && g_bIsBombScenario && g_bFreezetimeEnd && GetClientTeam(iClient) == CS_TEAM_CT && ShouldSaveInsteadOfRetake(iClient))
+	if (!g_bBombPlanted && g_bIsBombScenario && g_bFreezetimeEnd && ShouldSaveInsteadOfRetake(iClient))
 	{
 		hReturn.Value = false;
 		return MRES_Supercede;
@@ -2660,16 +2651,6 @@ public void LoadSDK()
 		SetFailState("Failed to create SDKCall: CBotManager::IsLineBlockedBySmoke");
 
 	StartPrepSDKCall(SDKCall_Player);
-	PrepSDKCall_SetFromConf(hConf, SDKConf_Signature, "CCSBot::BendLineOfSight");
-	PrepSDKCall_AddParameter(SDKType_Vector, SDKPass_Plain);
-	PrepSDKCall_AddParameter(SDKType_Vector, SDKPass_Plain);
-	PrepSDKCall_AddParameter(SDKType_Vector, SDKPass_ByRef, _, VENCODE_FLAG_COPYBACK);
-	PrepSDKCall_AddParameter(SDKType_Float, SDKPass_Plain);
-	PrepSDKCall_SetReturnInfo(SDKType_Bool, SDKPass_Plain);
-	if ((g_hBotBendLineOfSight = EndPrepSDKCall()) == null)
-		SetFailState("Failed to create SDKCall: CCSBot::BendLineOfSight");
-
-	StartPrepSDKCall(SDKCall_Player);
 	PrepSDKCall_SetFromConf(hConf, SDKConf_Signature, "CCSBot::ThrowGrenade");
 	PrepSDKCall_AddParameter(SDKType_Vector, SDKPass_Pointer);
 	if ((g_hBotThrowGrenade = EndPrepSDKCall()) == null)
@@ -3032,11 +3013,6 @@ public void BotEquipBestWeapon(int iClient, bool bMustEquip)
 public void BotSetLookAt(int iClient, const char[] szDesc, const float fPos[3], PriorityType ePri, float fDuration, bool bClearIfClose, float fAngleTolerance, bool bAttack)
 {
 	SDKCall(g_hBotSetLookAt, iClient, szDesc, fPos, ePri, fDuration, bClearIfClose, fAngleTolerance, bAttack);
-}
-
-public bool BotBendLineOfSight(int iClient, const float fEye[3], const float fTarget[3], float fBend[3], float fAngleLimit)
-{
-	return SDKCall(g_hBotBendLineOfSight, iClient, fEye, fTarget, fBend, fAngleLimit);
 }
 
 public void BotThrowGrenade(int iClient, const float fTarget[3])
@@ -4510,18 +4486,6 @@ stock void GetViewVector(const float fVecAngle[3], float fOutPut[3])
     fOutPut[0] = Cosine(fVecAngle[1] * FLOAT_PI / 180.0);
     fOutPut[1] = Sine(fVecAngle[1] * FLOAT_PI / 180.0);
     fOutPut[2] = -Sine(fVecAngle[0] * FLOAT_PI / 180.0);
-}
-
-stock float AngleNormalize(float fAngle)
-{
-    fAngle -= RoundToFloor(fAngle / 360.0) * 360.0;
-
-    if (fAngle > 180.0)
-        fAngle -= 360.0;
-    else if (fAngle < -180.0)
-        fAngle += 360.0;
-
-    return fAngle;
 }
 
 stock bool IsPointVisible(float fStart[3], float fEnd[3])
