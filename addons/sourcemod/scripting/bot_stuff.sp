@@ -20,6 +20,7 @@
 #define RETAKE_SAVE_FAR_DISTANCE 2600.0
 #define RETAKE_SAVE_TARGET_STEP 600.0
 #define RETAKE_SAVE_HOLD_RADIUS 180.0
+#define RETAKE_SAVE_HOLD_ARRIVE_DISTANCE 120.0
 #define RETAKE_SAVE_START_DELAY 5.0
 #define RETAKE_SAVE_PLANT_DISTANCE 400.0
 #define RETAKE_SAVE_REGION_MAX_DISTANCE 3600.0
@@ -79,6 +80,8 @@ float g_fSaveMoveRetryAt[MAXPLAYERS+1];
 float g_fSaveConditionSince[MAXPLAYERS+1];
 CNavArea g_pSaveHoldArea[MAXPLAYERS+1];
 bool g_bSaveHoldPosValid[MAXPLAYERS+1];
+bool g_bCTSaveLocked;
+float g_fCTSaveConditionSince;
 int g_iProfileRank[MAXPLAYERS+1], g_iPlayerColor[MAXPLAYERS+1], g_iTarget[MAXPLAYERS+1], g_iPrevTarget[MAXPLAYERS+1], g_iDoingSmokeNum[MAXPLAYERS+1], g_iActiveWeapon[MAXPLAYERS+1];
 int g_iCurrentRound, g_iRoundsPlayed, g_iCTScore, g_iTScore;
 int g_iProfileRankOffset, g_iPlayerColorOffset;
@@ -1036,6 +1039,8 @@ public void OnRoundStart(Event eEvent, const char[] szName, bool bDontBroadcast)
 	g_bTeamPeekRollResolved[CS_TEAM_CT] = false;
 	g_bTeamPeekRollPassed[CS_TEAM_T] = false;
 	g_bTeamPeekRollPassed[CS_TEAM_CT] = false;
+	g_bCTSaveLocked = false;
+	g_fCTSaveConditionSince = 0.0;
 
 	bool bIsScenario = g_bIsBombScenario || g_bIsHostageScenario;
 	int iTeam = g_bIsBombScenario ? CS_TEAM_CT : CS_TEAM_T;
@@ -1583,7 +1588,7 @@ public MRESReturn CCSBot_MoveTo(int iClient, DHookParam hParams)
 	if (g_pSaveHoldArea[iClient] == INVALID_NAV_AREA)
 		return MRES_Ignored;
 
-	if (g_pCurrArea[iClient] != INVALID_NAV_AREA && g_pCurrArea[iClient] == g_pSaveHoldArea[iClient])
+	if (IsAtSaveHoldArea(iClient))
 		return MRES_Supercede;
 
 	return MRES_Ignored;
@@ -1782,8 +1787,8 @@ public Action OnPlayerRunCmd(int iClient, int &iButtons, int &iImpulse, float fV
 
 	if (g_bIsProBot[iClient] && ShouldSaveInsteadOfRetake(iClient))
 	{
-		ProcessRetakeSaveBehavior(iClient, iButtons);
-		return Plugin_Changed;
+		if (ProcessRetakeSaveBehavior(iClient, iButtons))
+			return Plugin_Changed;
 	}
 
 	LogRetakeSaveDebug(iClient);
@@ -2761,7 +2766,13 @@ void InitializeSaveHoldPosition(int iClient)
 
 bool IsAtSaveHoldArea(int iClient)
 {
-	return g_bSaveHoldPosValid[iClient] && g_pSaveHoldArea[iClient] != INVALID_NAV_AREA && g_pCurrArea[iClient] != INVALID_NAV_AREA && g_pCurrArea[iClient] == g_pSaveHoldArea[iClient];
+	if (!g_bSaveHoldPosValid[iClient] || g_pSaveHoldArea[iClient] == INVALID_NAV_AREA)
+		return false;
+
+	if (g_pCurrArea[iClient] != INVALID_NAV_AREA && g_pCurrArea[iClient] == g_pSaveHoldArea[iClient])
+		return true;
+
+	return GetVectorDistance(g_fBotOrigin[iClient], g_fSaveHoldPos[iClient]) <= RETAKE_SAVE_HOLD_ARRIVE_DISTANCE;
 }
 
 void IssueSaveHoldMove(int iClient)
@@ -2779,14 +2790,9 @@ void IssueSaveHoldMove(int iClient)
 		return;
 	}
 
-	float fTarget[3];
-	NavMeshArea_GetClosestPointOnArea(g_pSaveHoldArea[iClient], g_fBotOrigin[iClient], fTarget);
-	if (GetVectorDistance(fTarget, g_fSaveHoldPos[iClient]) < 1.0)
-		Array_Copy(g_fSaveHoldPos[iClient], fTarget, 3);
-
 	g_bIssuingSaveMove[iClient] = true;
 	g_bSaveMoveIssued[iClient] = true;
-	BotMoveTo(iClient, fTarget, RETREAT_ROUTE);
+	BotMoveTo(iClient, g_fSaveHoldPos[iClient], RETREAT_ROUTE);
 	g_bIssuingSaveMove[iClient] = false;
 	g_fSaveMoveRetryAt[iClient] = fNow + 1.0;
 }
@@ -2922,12 +2928,17 @@ bool ShouldSaveInsteadOfRetake(int iClient)
 	if (!IsValidClient(iClient) || !IsPlayerAlive(iClient) || !IsFakeClient(iClient))
 		return false;
 
-	if (GetClientTeam(iClient) == CS_TEAM_T && IsTCarryingC4NearBombsite(iClient))
+	int iTeam = GetClientTeam(iClient);
+
+	if (iTeam == CS_TEAM_T && IsTCarryingC4NearBombsite(iClient))
 	{
 		g_bSaveLocked[iClient] = false;
 		g_fSaveConditionSince[iClient] = 0.0;
 		return false;
 	}
+
+	if (iTeam == CS_TEAM_CT)
+		return ShouldCTTeamSave();
 
 	if (g_bSaveLocked[iClient])
 		return true;
@@ -2950,6 +2961,57 @@ bool ShouldSaveInsteadOfRetake(int iClient)
 
 	g_bSaveLocked[iClient] = true;
 	return true;
+}
+
+bool ShouldCTTeamSave()
+{
+	if (g_bCTSaveLocked)
+		return true;
+
+	if (!ShouldStartCTTeamSave())
+	{
+		g_fCTSaveConditionSince = 0.0;
+		return false;
+	}
+
+	float fNow = GetGameTime();
+	if (g_fCTSaveConditionSince <= 0.0)
+	{
+		g_fCTSaveConditionSince = fNow;
+		return false;
+	}
+
+	if ((fNow - g_fCTSaveConditionSince) < RETAKE_SAVE_START_DELAY)
+		return false;
+
+	g_bCTSaveLocked = true;
+	return true;
+}
+
+bool ShouldStartCTTeamSave()
+{
+	if (g_bHalftimeSwitch || g_bForceT || g_bForceCT)
+		return false;
+
+	if (g_iAliveCountCT <= 0 || g_iAliveCountT <= 0)
+		return false;
+
+	if (g_iAliveCountT - g_iAliveCountCT < 2)
+		return false;
+
+	return g_iAvgMoneyCT <= RETAKE_SAVE_MONEY_THRESHOLD;
+}
+
+bool IsSaveActiveForClient(int iClient)
+{
+	if (!IsValidClient(iClient) || !IsPlayerAlive(iClient) || !IsFakeClient(iClient))
+		return false;
+
+	int iTeam = GetClientTeam(iClient);
+	if (iTeam == CS_TEAM_CT)
+		return g_bCTSaveLocked;
+
+	return g_bSaveLocked[iClient];
 }
 
 bool ShouldStartSaveInsteadOfRetake(int iClient)
@@ -3015,9 +3077,8 @@ void LogRetakeSaveDebug(int iClient)
 	int iEnemyAlive = (iTeam == CS_TEAM_T) ? g_iAliveCountCT : g_iAliveCountT;
 	int iOwnAvgMoney = (iTeam == CS_TEAM_T) ? g_iAvgMoneyT : g_iAvgMoneyCT;
 	int iManDisadvantage = iEnemyAlive - iOwnAlive;
-	bool bStartedSave = ShouldStartSaveInsteadOfRetake(iClient);
-	bool bWouldSave = g_bSaveLocked[iClient] || bStartedSave;
-	if (!bWouldSave && g_cvRetakeSaveDebug.IntValue < 2)
+	bool bSaveActive = IsSaveActiveForClient(iClient);
+	if (!bSaveActive && g_cvRetakeSaveDebug.IntValue < 2)
 		return;
 
 	float fDangerPos[3];
@@ -3025,10 +3086,14 @@ void LogRetakeSaveDebug(int iClient)
 	if (GetSaveDangerPosition(iClient, fDangerPos))
 		fDistanceToDanger = GetVectorDistance(g_fBotOrigin[iClient], fDangerPos);
 
-	PrintToServer("[BB SaveDebug] client=%N team=%d save_locked=%d start_save=%d would_save=%d task=%d disposition=%d own_alive=%d enemy_alive=%d disadvantage=%d avg_money=%d danger_dist=%.1f defusing=%d nearby=%d", iClient, iTeam, g_bSaveLocked[iClient], bStartedSave, bWouldSave, view_as<int>(GetTask(iClient)), view_as<int>(GetDisposition(iClient)), iOwnAlive, iEnemyAlive, iManDisadvantage, iOwnAvgMoney, fDistanceToDanger, GetEntProp(iClient, Prop_Send, "m_bIsDefusing"), GetEntData(iClient, g_iBotNearbyEnemiesOffset));
+	bool bAtHold = IsAtSaveHoldArea(iClient);
+	bool bThreat = IsSavingBotUnderDirectThreat(iClient);
+	bool bLocked = (iTeam == CS_TEAM_CT) ? g_bCTSaveLocked : g_bSaveLocked[iClient];
+
+	PrintToServer("[BB SaveDebug] client=%N team=%d locked=%d active=%d at_hold=%d threat=%d task=%d disposition=%d own_alive=%d enemy_alive=%d disadvantage=%d avg_money=%d danger_dist=%.1f defusing=%d nearby=%d", iClient, iTeam, bLocked, bSaveActive, bAtHold, bThreat, view_as<int>(GetTask(iClient)), view_as<int>(GetDisposition(iClient)), iOwnAlive, iEnemyAlive, iManDisadvantage, iOwnAvgMoney, fDistanceToDanger, GetEntProp(iClient, Prop_Send, "m_bIsDefusing"), GetEntData(iClient, g_iBotNearbyEnemiesOffset));
 }
 
-void ProcessRetakeSaveBehavior(int iClient, int &iButtons)
+bool ProcessRetakeSaveBehavior(int iClient, int &iButtons)
 {
 	iButtons &= ~IN_USE;
 
@@ -3038,20 +3103,33 @@ void ProcessRetakeSaveBehavior(int iClient, int &iButtons)
 	if (g_iScriptAction[iClient] != ScriptAction_None)
 		CancelClientScriptAction(iClient, false);
 
-	if (GetClientTeam(iClient) == CS_TEAM_CT)
-		SetDisposition(iClient, SELF_DEFENSE);
-	else
-		SetDisposition(iClient, SELF_DEFENSE);
-	BotEquipBestWeapon(iClient, true);
-
 	if (!g_bSaveHoldPosValid[iClient])
 		InitializeSaveHoldPosition(iClient);
 
 	if (!IsAtSaveHoldArea(iClient))
 	{
+		if (IsSavingBotUnderDirectThreat(iClient))
+		{
+			SetDisposition(iClient, ENGAGE_AND_INVESTIGATE);
+			return false;
+		}
+
+		SetDisposition(iClient, SELF_DEFENSE);
+		BotEquipBestWeapon(iClient, true);
 		IssueSaveHoldMove(iClient);
-		return;
+		iButtons |= IN_SPEED;
+		iButtons &= ~IN_DUCK;
+		return true;
 	}
+
+	if (IsSavingBotUnderDirectThreat(iClient))
+	{
+		SetDisposition(iClient, ENGAGE_AND_INVESTIGATE);
+		return false;
+	}
+
+	SetDisposition(iClient, SELF_DEFENSE);
+	BotEquipBestWeapon(iClient, true);
 
 	if (GetClientTeam(iClient) == CS_TEAM_CT)
 		SetEntData(iClient, g_iBotTaskOffset, HOLD_POSITION);
@@ -3065,6 +3143,18 @@ void ProcessRetakeSaveBehavior(int iClient, int &iButtons)
 
 	iButtons &= ~(IN_FORWARD | IN_BACK | IN_MOVELEFT | IN_MOVERIGHT | IN_JUMP | IN_SPEED);
 	iButtons |= IN_DUCK;
+	return true;
+}
+
+bool IsSavingBotUnderDirectThreat(int iClient)
+{
+	if (GetEntData(iClient, g_iEnemyVisibleOffset) != 0)
+		return true;
+
+	if (GetEntData(iClient, g_iBotNearbyEnemiesOffset) > 0)
+		return true;
+
+	return false;
 }
 
 bool GetSaveDangerPosition(int iClient, float fDangerPos[3])
