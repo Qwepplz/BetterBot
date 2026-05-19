@@ -136,6 +136,7 @@ ConVar g_cvMolotovDetonateTime;
 ConVar g_cvMolotovMaxSlope;
 ConVar g_cvRetakeSaveDebug;
 ConVar g_cvForceSave;
+ConVar g_cvAttackDebug;
 Handle g_hBotMoveTo;
 Handle g_hLookupBone;
 Handle g_hGetBonePosition;
@@ -165,6 +166,7 @@ float g_fLastNavUpdate[MAXPLAYERS+1][3];
 float g_fWeaponPickupCooldown[MAXPLAYERS+1];
 float g_fNadeLineupCooldown[MAXPLAYERS+1];
 float g_fRetakeSaveDebugTime[MAXPLAYERS+1];
+float g_fAttackDebugTime[MAXPLAYERS+1];
 #define LEGACY_DEFAULT_NADE_STUCK_TIMEOUT 5.0
 #define LEGACY_DEFAULT_NADE_RETRY_COOLDOWN 25.0
 #define SCRIPT_LINEUP_FAILURE_COOLDOWN 5.0
@@ -342,6 +344,7 @@ public void OnPluginStart()
     g_cvMolotovMaxSlope = FindConVar("weapon_molotov_maxdetonateslope");
     g_cvRetakeSaveDebug = CreateConVar("bb_retake_save_debug", "0", "Log save trigger, objective block, and MoveTo state. 0=off, 1=save-active clients, 2=all live T/CT bots plus hook details.", _, true, 0.0, true, 2.0);
     g_cvForceSave = CreateConVar("bb_force_save", "0", "Force all bots into save behavior regardless of conditions.", _, true, 0.0, true, 1.0);
+    g_cvAttackDebug = CreateConVar("bb_attack_debug", "0", "Log planted-bomb CT IN_ATTACK lifecycle. 0=off, 1=on.", _, true, 0.0, true, 1.0);
 
     g_bIsCompetitive = (g_cvGameMode.IntValue == 1 && g_cvGameType.IntValue == 0);
 
@@ -1098,6 +1101,7 @@ public void OnRoundStart(Event eEvent, const char[] szName, bool bDontBroadcast)
 
 		g_fShootTimestamp[i] = 0.0;
 		g_fThrowNadeTimestamp[i] = 0.0;
+		g_fAttackDebugTime[i] = 0.0;
 		g_fCrouchTimestamp[i] = 0.0;
 		g_fSniperRetreatCooldown[i] = 0.0;
 
@@ -1266,7 +1270,7 @@ public void OnPlayerDeath(Event eEvent, const char[] szName, bool bDontBroadcast
 	g_fSaveMoveToDebugTime[iClient] = 0.0;
 	g_fSaveLookAtDebugTime[iClient] = 0.0;
 	g_pSaveHoldArea[iClient] = INVALID_NAV_AREA;
-
+	g_fAttackDebugTime[iClient] = 0.0;
 	if (IsValidClient(iClient) && IsFakeClient(iClient))
 		CancelClientActiveLineupActions(iClient, false);
 
@@ -1859,12 +1863,24 @@ public Action OnPlayerRunCmd(int iClient, int &iButtons, int &iImpulse, float fV
 	}
 
 	bool bShouldSaveInsteadOfRetake = ShouldSaveInsteadOfRetake(iClient);
+
+	int iButtonsIn = iButtons;
+	bool bCTPlantedBombAttackRebuild = g_bBombPlanted && GetClientTeam(iClient) == CS_TEAM_CT && g_bIsProBot[iClient];
+	bool bWeaponCoveredByPluginFire = bCTPlantedBombAttackRebuild && IsPluginFireCoveredWeapon(iDefIndex);
+	DispositionType eDispositionBeforeSave = GetDisposition(iClient);
+	if (bWeaponCoveredByPluginFire)
+		iButtons &= ~IN_ATTACK;
+	int iButtonsAfterPreClear = iButtons;
+
 	if (bShouldSaveInsteadOfRetake)
 	{
 		bool bSaveCommandChanged = ProcessRetakeSaveBehavior(iClient, iButtons);
 		LogRetakeSaveDebug(iClient);
 		if (bSaveCommandChanged)
+		{
+			LogAttackStateDebug(iClient, iButtonsIn, iButtonsAfterPreClear, iButtons, iButtons, view_as<int>(GetTask(iClient)), eDispositionBeforeSave, GetDisposition(iClient), !!GetEntData(iClient, g_iEnemyVisibleOffset), g_iTarget[iClient], GetClientAimTarget(iClient, true), g_fTargetPos[iClient], iDefIndex, bWeaponCoveredByPluginFire, true, BotMimic_IsPlayerMimicing(iClient));
 			return Plugin_Changed;
+		}
 	}
 	else
 	{
@@ -2016,6 +2032,7 @@ public Action OnPlayerRunCmd(int iClient, int &iButtons, int &iImpulse, float fV
 	if (g_bIsProBot[iClient] && GetDisposition(iClient) != IGNORE_ENEMIES)
 		ProcessCombat(iClient, iButtons, fVel, fAngles, iDefIndex, fSpeed, fNow);
 
+	int iButtonsAfterCombat = iButtons;
 	if (g_bIsProBot[iClient] && CanThrowNade(iClient) && !g_bThrowGrenade[iClient] && !BotMimic_IsPlayerMimicing(iClient) && GetEntityMoveType(iClient) != MOVETYPE_LADDER && GetTask(iClient) != ESCAPE_FROM_BOMB && GetTask(iClient) != ESCAPE_FROM_FLAMES)
 	{
 		bool bIsEnemyVisible = !!GetEntData(iClient, g_iEnemyVisibleOffset);
@@ -2034,6 +2051,8 @@ public Action OnPlayerRunCmd(int iClient, int &iButtons, int &iImpulse, float fV
 			}
 		}
 	}
+
+	LogAttackStateDebug(iClient, iButtonsIn, iButtonsAfterPreClear, iButtonsAfterCombat, iButtons, view_as<int>(GetTask(iClient)), eDispositionBeforeSave, GetDisposition(iClient), !!GetEntData(iClient, g_iEnemyVisibleOffset), g_iTarget[iClient], GetClientAimTarget(iClient, true), g_fTargetPos[iClient], iDefIndex, bWeaponCoveredByPluginFire, false, BotMimic_IsPlayerMimicing(iClient));
 
 	return Plugin_Changed;
 }
@@ -2234,6 +2253,7 @@ public void OnClientDisconnect(int iClient)
 	g_iProfileRank[iClient] = 0;
 	g_iPlayerColor[iClient] = -1;
 	g_bIsProBot[iClient] = false;
+	g_fAttackDebugTime[iClient] = 0.0;
 	g_bUseCZ75[iClient] = false;
 	g_bUseUSP[iClient] = false;
 	g_bUseM4A1S[iClient] = false;
@@ -3294,6 +3314,29 @@ bool ShouldStartSaveInsteadOfRetake(int iClient)
 	}
 
 	return iOwnAvgMoney <= RETAKE_SAVE_MONEY_THRESHOLD;
+}
+
+void LogAttackStateDebug(int iClient, int iButtonsIn, int iButtonsAfterPreClear, int iButtonsAfterCombat, int iButtonsOut, int iTask, DispositionType eDispositionBefore, DispositionType eDispositionAfter, bool bEnemyVisible, int iTarget, int iAimTarget, float fTargetPos[3], int iDefIndex, bool bWeaponCovered, bool bEarlyReturn, bool bBotMimicActive)
+{
+	if (g_cvAttackDebug.IntValue < 1)
+		return;
+	if (!g_bBombPlanted || GetClientTeam(iClient) != CS_TEAM_CT)
+		return;
+
+	bool bAtkIn = !!(iButtonsIn & IN_ATTACK);
+	bool bAtkPreClear = !!(iButtonsAfterPreClear & IN_ATTACK);
+	bool bAtkCombat = !!(iButtonsAfterCombat & IN_ATTACK);
+	bool bAtkOut = !!(iButtonsOut & IN_ATTACK);
+	if (!bAtkIn && !bAtkPreClear && !bAtkCombat && !bAtkOut)
+		return;
+
+	float fNow = GetGameTime();
+	if (fNow < g_fAttackDebugTime[iClient])
+		return;
+	g_fAttackDebugTime[iClient] = fNow + 0.5;
+
+	PrintToServer("[AtkDbg] cl=%d task=%d disp_pre=%d disp_post=%d vis=%d tgt=%d aim=%d def=%d cov=%d early=%d mimic=%d atk_in=%d atk_pc=%d atk_cb=%d atk_out=%d pos=%.0f,%.0f,%.0f",
+		iClient, iTask, eDispositionBefore, eDispositionAfter, bEnemyVisible, iTarget, iAimTarget, iDefIndex, bWeaponCovered, bEarlyReturn, bBotMimicActive, bAtkIn, bAtkPreClear, bAtkCombat, bAtkOut, fTargetPos[0], fTargetPos[1], fTargetPos[2]);
 }
 
 void LogRetakeSaveDebug(int iClient)
@@ -4921,6 +4964,11 @@ stock bool IsSprayWeapon(int iDefIndex)
 			return true;
 	}
 	return false;
+}
+
+stock bool IsPluginFireCoveredWeapon(int iDefIndex)
+{
+	return IsRifleOrHeavy(iDefIndex) || IsSprayWeapon(iDefIndex);
 }
 
 int GetTeamAverageMoney(int iTeam)
