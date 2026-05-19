@@ -152,6 +152,7 @@ Handle g_hTryToRetreat;
 Handle g_hCheckPlayerTimer;
 Handle g_hMoveToBombTimer;
 Handle g_hPlayerResourceRetryTimer;
+Handle g_hDropWeaponsTimer;
 bool g_bPlayerResourceRetryLogged;
 int g_iPlayerResourceRetryCount;
 Address g_pTheBots;
@@ -760,7 +761,10 @@ public Action Timer_DropWeapons(Handle hTimer, any data)
         return Plugin_Continue;
 
     if (g_bFreezetimeEnd)
+    {
+        g_hDropWeaponsTimer = null;
         return Plugin_Stop;
+    }
 
     ArrayList aBotsT = new ArrayList(2);
     ArrayList aBotsCT = new ArrayList(2);
@@ -922,6 +926,12 @@ public void OnMapEnd()
 	{
 		delete g_hPlayerResourceRetryTimer;
 		g_hPlayerResourceRetryTimer = null;
+	}
+
+	if (g_hDropWeaponsTimer != null)
+	{
+		delete g_hDropWeaponsTimer;
+		g_hDropWeaponsTimer = null;
 	}
 
 	g_iPlayerResourceRetryCount = 0;
@@ -1103,13 +1113,19 @@ public void OnRoundStart(Event eEvent, const char[] szName, bool bDontBroadcast)
 	g_iAvgMoneyT = GetTeamAverageMoney(CS_TEAM_T);
 	g_iAvgMoneyCT = GetTeamAverageMoney(CS_TEAM_CT);
 
-	if (g_bIsCompetitive)
-		CreateTimer(0.5, Timer_DropWeapons, _, TIMER_REPEAT | TIMER_FLAG_NO_MAPCHANGE);
+	if (g_bIsCompetitive && g_hDropWeaponsTimer == null)
+		g_hDropWeaponsTimer = CreateTimer(0.5, Timer_DropWeapons, _, TIMER_REPEAT | TIMER_FLAG_NO_MAPCHANGE);
 }
 
 public void OnRoundEnd(Event eEvent, const char[] szName, bool bDontBroadcast)
 {
 	g_bRoundDecided = true;
+
+	if (g_hDropWeaponsTimer != null)
+	{
+		delete g_hDropWeaponsTimer;
+		g_hDropWeaponsTimer = null;
+	}
 
 	for (int i = 1; i <= MaxClients; i++)
 	{
