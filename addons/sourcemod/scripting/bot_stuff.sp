@@ -3195,6 +3195,13 @@ bool ShouldSaveInsteadOfRetake(int iClient)
 
 bool ShouldCTTeamSave()
 {
+	if (g_iAliveCountT <= 0)
+	{
+		g_bCTSaveLocked = false;
+		g_fCTSaveConditionSince = 0.0;
+		return false;
+	}
+
 	if (g_bCTSaveLocked)
 		return true;
 
