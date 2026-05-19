@@ -135,6 +135,7 @@ ConVar g_cvGravity;
 ConVar g_cvMolotovDetonateTime;
 ConVar g_cvMolotovMaxSlope;
 ConVar g_cvRetakeSaveDebug;
+ConVar g_cvForceSave;
 Handle g_hBotMoveTo;
 Handle g_hLookupBone;
 Handle g_hGetBonePosition;
@@ -340,6 +341,7 @@ public void OnPluginStart()
     g_cvMolotovDetonateTime = FindConVar("molotov_throw_detonate_time");
     g_cvMolotovMaxSlope = FindConVar("weapon_molotov_maxdetonateslope");
     g_cvRetakeSaveDebug = CreateConVar("bb_retake_save_debug", "0", "Log save trigger, objective block, and MoveTo state. 0=off, 1=save-active clients, 2=all live T/CT bots plus hook details.", _, true, 0.0, true, 2.0);
+    g_cvForceSave = CreateConVar("bb_force_save", "0", "Force all bots into save behavior regardless of conditions.", _, true, 0.0, true, 1.0);
 
     g_bIsCompetitive = (g_cvGameMode.IntValue == 1 && g_cvGameType.IntValue == 0);
 
@@ -1589,6 +1591,17 @@ public MRESReturn CCSBot_CanSeeLooseBomb(int iClient, DHookReturn hReturn)
 	return MRES_Ignored;
 }
 
+bool IsSaveConflictObjective(TaskType iTask, int iTeam)
+{
+	if (iTeam == CS_TEAM_CT)
+		return (iTask == DEFUSE_BOMB || iTask == FIND_TICKING_BOMB);
+
+	if (iTeam == CS_TEAM_T)
+		return (iTask == PLANT_BOMB || iTask == GUARD_LOOSE_BOMB);
+
+	return false;
+}
+
 public MRESReturn CCSBot_MoveTo(int iClient, DHookParam hParams)
 {
 	if (!IsValidClient(iClient) || !IsFakeClient(iClient) || hParams == null)
@@ -1613,10 +1626,15 @@ public MRESReturn CCSBot_MoveTo(int iClient, DHookParam hParams)
 	bool bAtHold = IsAtSaveHoldArea(iClient);
 	bool bThreat = IsSavingBotUnderDirectThreat(iClient);
 	bool bTargetInHold = IsMoveTargetInsideSaveHold(iClient, fMoveTarget);
-	bool bHoldLeashBlock = bAtHold && !bThreat && g_pSaveHoldArea[iClient] != INVALID_NAV_AREA && !bTargetInHold;
-	LogSaveMoveToDebug(iClient, bSaveActive, bAtHold, bThreat, bTargetInHold, bHoldLeashBlock, fMoveTarget, iRoute);
 
-	if (bHoldLeashBlock)
+	TaskType iTask = GetTask(iClient);
+	bool bSaveConflict = bAtHold && !bThreat && !bTargetInHold
+		&& g_pSaveHoldArea[iClient] != INVALID_NAV_AREA
+		&& IsSaveConflictObjective(iTask, GetClientTeam(iClient));
+
+	LogSaveMoveToDebug(iClient, bSaveActive, bAtHold, bThreat, bTargetInHold, bSaveConflict, fMoveTarget, iRoute);
+
+	if (bSaveConflict)
 		return MRES_Supercede;
 
 	return MRES_Ignored;
@@ -3137,6 +3155,9 @@ bool ShouldSaveInsteadOfRetake(int iClient)
 	if (!IsValidClient(iClient) || !IsPlayerAlive(iClient) || !IsFakeClient(iClient))
 		return false;
 
+	if (g_cvForceSave != null && g_cvForceSave.BoolValue)
+		return true;
+
 	int iTeam = GetClientTeam(iClient);
 
 	if (iTeam == CS_TEAM_T && IsTCarryingC4NearBombsite(iClient))
@@ -3316,21 +3337,29 @@ void LogRetakeSaveDebug(int iClient)
 	PrintToServer("[BB SaveDebug] client=%N team=%d locked=%d active=%d at_hold=%d threat=%d task=%d ct_defuse_task=%d disposition=%d own_alive=%d enemy_alive=%d disadvantage=%d avg_money=%d danger_dist=%.1f bomb_dist=%.1f defusing=%d nearby=%d move_leash_candidate=%d save_move_retry_at=%.2f hold_anchor_at=%.2f save_hold_area_valid=%d save_move_issued=%d current_area_is_hold=%d is_mimicing=%d script_action=%d legacy_nade=%d throwing=%d", iClient, iTeam, bLocked, bSaveActive, bAtHold, bThreat, view_as<int>(eTask), bCTDefuseTask, view_as<int>(GetDisposition(iClient)), iOwnAlive, iEnemyAlive, iManDisadvantage, iOwnAvgMoney, fDistanceToDanger, fDistanceToBomb, GetEntProp(iClient, Prop_Send, "m_bIsDefusing"), GetEntData(iClient, g_iBotNearbyEnemiesOffset), bMoveLeashCandidate, g_fSaveMoveRetryAt[iClient], g_fSaveHoldAnchorAt[iClient], bHoldAreaValid, g_bSaveMoveIssued[iClient], bCurrentAreaIsHold, bMimicing, view_as<int>(g_iScriptAction[iClient]), g_iDoingSmokeNum[iClient], g_bThrowGrenade[iClient]);
 }
 
-void LogSaveMoveToDebug(int iClient, bool bSaveActive, bool bAtHold, bool bThreat, bool bTargetInHold, bool bHoldLeashBlock, const float fMoveTarget[3], int iRoute)
+void LogSaveMoveToDebug(int iClient, bool bSaveActive, bool bAtHold, bool bThreat, bool bTargetInHold, bool bSaveConflict, const float fMoveTarget[3], int iRoute)
 {
 	if (g_cvRetakeSaveDebug == null || g_cvRetakeSaveDebug.IntValue < 2)
 		return;
-
-	float fNow = GetGameTime();
-	if (fNow < g_fSaveMoveToDebugTime[iClient])
-		return;
-	g_fSaveMoveToDebugTime[iClient] = fNow + 0.5;
 
 	float fMoveTargetToHold = -1.0;
 	if (g_bSaveHoldPosValid[iClient])
 		fMoveTargetToHold = GetVectorDistance(fMoveTarget, g_fSaveHoldPos[iClient]);
 
-	PrintToServer("[BB SaveMoveTo] client=%N team=%d active=%d at_hold=%d threat=%d route=%d target_to_hold=%.1f target_in_hold=%d hold_leash_block=%d actual_supercede=%d", iClient, GetClientTeam(iClient), bSaveActive, bAtHold, bThreat, iRoute, fMoveTargetToHold, bTargetInHold, bHoldLeashBlock, bHoldLeashBlock);
+	TaskType iTask = GetTask(iClient);
+	bool bSaveConflictTask = IsSaveConflictObjective(iTask, GetClientTeam(iClient));
+	int iCurrArea = (g_pCurrArea[iClient] != INVALID_NAV_AREA) ? view_as<int>(g_pCurrArea[iClient]) : -1;
+	int iHoldArea = (g_pSaveHoldArea[iClient] != INVALID_NAV_AREA) ? view_as<int>(g_pSaveHoldArea[iClient]) : -1;
+
+	if (!bSaveConflict)
+	{
+		float fNow = GetGameTime();
+		if (fNow < g_fSaveMoveToDebugTime[iClient])
+			return;
+		g_fSaveMoveToDebugTime[iClient] = fNow + 2.0;
+	}
+
+	PrintToServer("[BB SaveMoveTo] client=%N team=%d active=%d at_hold=%d threat=%d route=%d target_to_hold=%.1f target_in_hold=%d save_conflict=%d task=%d conflict_task=%d curr_area=%d hold_area=%d", iClient, GetClientTeam(iClient), bSaveActive, bAtHold, bThreat, iRoute, fMoveTargetToHold, bTargetInHold, bSaveConflict, view_as<int>(iTask), bSaveConflictTask, iCurrArea, iHoldArea);
 }
 
 void LogSaveLookAtDebug(int iClient, const char[] szDesc, bool bBlocked)
