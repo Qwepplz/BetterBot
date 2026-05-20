@@ -21,6 +21,8 @@
 #define RETAKE_SAVE_TARGET_STEP 600.0
 #define RETAKE_SAVE_START_DELAY 5.0
 #define RETAKE_SAVE_PLANT_DISTANCE 400.0
+#define CT_SAVE_COMMIT_MIN_BOMB_DISTANCE 1200.0
+#define CT_SAVE_COMMIT_DEFUSE_CANCEL_DISTANCE 500.0
 
 enum
 {
@@ -1590,7 +1592,8 @@ public MRESReturn CCSBot_MoveTo(int iClient, DHookParam hParams)
 	if (g_bIssuingSaveMove[iClient])
 		return MRES_Ignored;
 
-	bool bSaveActive = ShouldSaveInsteadOfRetake(iClient);
+	int iTeam = GetClientTeam(iClient);
+	bool bSaveActive = (iTeam == CS_TEAM_CT && g_bBombPlanted) ? IsCTCommittedToSave(iClient) : ShouldSaveInsteadOfRetake(iClient);
 	if (!bSaveActive)
 		return MRES_Ignored;
 
@@ -1602,8 +1605,11 @@ public MRESReturn CCSBot_MoveTo(int iClient, DHookParam hParams)
 		return MRES_Ignored;
 
 	TaskType iTask = GetTask(iClient);
-	if (IsSaveConflictObjective(iTask, GetClientTeam(iClient)))
+	if (IsSaveConflictObjective(iTask, iTeam))
+	{
+		LogCTCommittedSaveObjectiveBlock(iClient, "MoveTo", "objective");
 		return MRES_Supercede;
+	}
 
 	return MRES_Ignored;
 }
@@ -1617,13 +1623,14 @@ public MRESReturn CCSBot_SetLookAt(int iClient, DHookParam hParams)
 
 	char szDesc[64];
 	DHookGetParamString(hParams, 1, szDesc, sizeof(szDesc));
-	bool bSaveActive = ShouldSaveInsteadOfRetake(iClient);
 	int iTeam = GetClientTeam(iClient);
+	bool bSaveActive = (iTeam == CS_TEAM_CT && g_bBombPlanted) ? IsCTCommittedToSave(iClient) : ShouldSaveInsteadOfRetake(iClient);
 
 	if (strcmp(szDesc, "Defuse bomb") == 0 || strcmp(szDesc, "Use entity") == 0 || strcmp(szDesc, "Open door") == 0 || strcmp(szDesc, "Hostage") == 0 || strcmp(szDesc, "Avoid Flashbang") == 0)
 	{
 		if (bSaveActive && iTeam == CS_TEAM_CT && strcmp(szDesc, "Defuse bomb") == 0)
 		{
+			LogCTCommittedSaveObjectiveBlock(iClient, "SetLookAt", "Defuse bomb");
 			LogSaveLookAtDebug(iClient, szDesc, true);
 			return MRES_Supercede;
 		}
@@ -2868,10 +2875,18 @@ bool ShouldSaveInsteadOfRetake(int iClient)
 	if (!IsValidClient(iClient) || !IsPlayerAlive(iClient) || !IsFakeClient(iClient))
 		return false;
 
-	if (g_cvForceSave != null && g_cvForceSave.BoolValue)
-		return true;
-
 	int iTeam = GetClientTeam(iClient);
+
+	if (iTeam == CS_TEAM_CT)
+	{
+		if (g_bBombPlanted)
+			return IsCTCommittedToSave(iClient);
+
+		if (IsForceSaveEnabled())
+			return true;
+
+		return ShouldCTTeamSave();
+	}
 
 	if (iTeam == CS_TEAM_T && IsTCarryingC4NearBombsite(iClient))
 	{
@@ -2880,8 +2895,8 @@ bool ShouldSaveInsteadOfRetake(int iClient)
 		return false;
 	}
 
-	if (iTeam == CS_TEAM_CT)
-		return ShouldCTTeamSave();
+	if (IsForceSaveEnabled())
+		return true;
 
 	if (g_bSaveLocked[iClient])
 		return true;
@@ -2904,6 +2919,30 @@ bool ShouldSaveInsteadOfRetake(int iClient)
 
 	g_bSaveLocked[iClient] = true;
 	return true;
+}
+
+bool IsForceSaveEnabled()
+{
+	return (g_cvForceSave != null && g_cvForceSave.BoolValue);
+}
+
+bool ShouldCTStrategicSaveRuntime()
+{
+	if (IsForceSaveEnabled())
+		return true;
+
+	return ShouldCTTeamSave();
+}
+
+bool IsCTStrategicSaveActive()
+{
+	if (IsForceSaveEnabled())
+		return true;
+
+	if (g_iAliveCountT <= 0)
+		return false;
+
+	return g_bCTSaveLocked;
 }
 
 bool ShouldCTTeamSave()
@@ -2935,6 +2974,72 @@ bool ShouldCTTeamSave()
 		return false;
 
 	g_bCTSaveLocked = true;
+	return true;
+}
+
+bool IsCTCommittedToSave(int iClient)
+{
+	if (!IsValidClient(iClient) || !IsPlayerAlive(iClient) || !IsFakeClient(iClient))
+		return false;
+
+	if (GetClientTeam(iClient) != CS_TEAM_CT)
+		return false;
+
+	if (!g_bBombPlanted)
+		return false;
+
+	if (!ShouldCTStrategicSaveRuntime())
+		return false;
+
+	if (!!GetEntProp(iClient, Prop_Send, "m_bIsDefusing"))
+		return false;
+
+	if (IsSavingBotUnderDirectThreat(iClient))
+		return false;
+
+	float fBombDistance;
+	if (!GetDistanceToPlantedBomb(iClient, fBombDistance))
+		return false;
+
+	if (fBombDistance <= CT_SAVE_COMMIT_DEFUSE_CANCEL_DISTANCE)
+		return false;
+
+	if (fBombDistance < CT_SAVE_COMMIT_MIN_BOMB_DISTANCE)
+		return false;
+
+	return true;
+}
+
+bool IsCTCommittedToSaveSnapshot(int iClient)
+{
+	if (!IsValidClient(iClient) || !IsPlayerAlive(iClient) || !IsFakeClient(iClient))
+		return false;
+
+	if (GetClientTeam(iClient) != CS_TEAM_CT)
+		return false;
+
+	if (!g_bBombPlanted)
+		return false;
+
+	if (!IsCTStrategicSaveActive())
+		return false;
+
+	if (!!GetEntProp(iClient, Prop_Send, "m_bIsDefusing"))
+		return false;
+
+	if (IsSavingBotUnderDirectThreat(iClient))
+		return false;
+
+	float fBombDistance;
+	if (!GetDistanceToPlantedBomb(iClient, fBombDistance))
+		return false;
+
+	if (fBombDistance <= CT_SAVE_COMMIT_DEFUSE_CANCEL_DISTANCE)
+		return false;
+
+	if (fBombDistance < CT_SAVE_COMMIT_MIN_BOMB_DISTANCE)
+		return false;
+
 	return true;
 }
 
@@ -3050,7 +3155,7 @@ void LogRetakeSaveDebug(int iClient)
 	int iEnemyAlive = (iTeam == CS_TEAM_T) ? g_iAliveCountCT : g_iAliveCountT;
 	int iOwnAvgMoney = (iTeam == CS_TEAM_T) ? g_iAvgMoneyT : g_iAvgMoneyCT;
 	int iManDisadvantage = iEnemyAlive - iOwnAlive;
-	bool bSaveActive = IsSaveActiveForClient(iClient);
+	bool bSaveActive = IsSaveActiveForClient(iClient) || IsForceSaveEnabled();
 	if (!bSaveActive && g_cvRetakeSaveDebug.IntValue < 2)
 		return;
 
@@ -3063,7 +3168,30 @@ void LogRetakeSaveDebug(int iClient)
 	bool bLocked = (iTeam == CS_TEAM_CT) ? g_bCTSaveLocked : g_bSaveLocked[iClient];
 	TaskType eTask = GetTask(iClient);
 
-	PrintToServer("[BB SaveDebug] client=%N team=%d locked=%d active=%d threat=%d task=%d disposition=%d own_alive=%d enemy_alive=%d disadvantage=%d avg_money=%d danger_dist=%.1f", iClient, iTeam, bLocked, bSaveActive, bThreat, view_as<int>(eTask), view_as<int>(GetDisposition(iClient)), iOwnAlive, iEnemyAlive, iManDisadvantage, iOwnAvgMoney, fDistanceToDanger);
+	float fBombDistance = -1.0;
+	if (iTeam == CS_TEAM_CT)
+		GetDistanceToPlantedBomb(iClient, fBombDistance);
+
+	bool bCTTeamSave = (iTeam == CS_TEAM_CT) ? IsCTStrategicSaveActive() : false;
+	bool bCTCommittedSave = (iTeam == CS_TEAM_CT) ? IsCTCommittedToSaveSnapshot(iClient) : false;
+	bool bDefusing = !!GetEntProp(iClient, Prop_Send, "m_bIsDefusing");
+
+	PrintToServer("[BB SaveDebug] client=%N team=%d locked=%d active=%d ct_team_save=%d ct_commit=%d threat=%d task=%d disposition=%d defusing=%d own_alive=%d enemy_alive=%d disadvantage=%d avg_money=%d danger_dist=%.1f bomb_dist=%.1f", iClient, iTeam, bLocked, bSaveActive, bCTTeamSave, bCTCommittedSave, bThreat, view_as<int>(eTask), view_as<int>(GetDisposition(iClient)), bDefusing, iOwnAlive, iEnemyAlive, iManDisadvantage, iOwnAvgMoney, fDistanceToDanger, fBombDistance);
+}
+
+void LogCTCommittedSaveObjectiveBlock(int iClient, const char[] szHook, const char[] szReason)
+{
+	if (g_cvRetakeSaveDebug == null || g_cvRetakeSaveDebug.IntValue < 2)
+		return;
+
+	if (GetClientTeam(iClient) != CS_TEAM_CT)
+		return;
+
+	float fBombDistance = -1.0;
+	GetDistanceToPlantedBomb(iClient, fBombDistance);
+
+	PrintToServer("[BB CTSaveBlock] client=%N hook=%s reason=%s task=%d disposition=%d bomb_dist=%.1f defusing=%d threat=%d",
+		iClient, szHook, szReason, view_as<int>(GetTask(iClient)), view_as<int>(GetDisposition(iClient)), fBombDistance, !!GetEntProp(iClient, Prop_Send, "m_bIsDefusing"), IsSavingBotUnderDirectThreat(iClient));
 }
 
 void LogSaveLookAtDebug(int iClient, const char[] szDesc, bool bBlocked)
@@ -3304,6 +3432,18 @@ bool GetPlantedBombPosition(float fC4Pos[3])
 		return false;
 
 	GetEntPropVector(iPlantedC4, Prop_Send, "m_vecOrigin", fC4Pos);
+	return true;
+}
+
+bool GetDistanceToPlantedBomb(int iClient, float &fDistance)
+{
+	float fC4Pos[3];
+	if (!GetPlantedBombPosition(fC4Pos))
+		return false;
+
+	float fClientPos[3];
+	GetClientAbsOrigin(iClient, fClientPos);
+	fDistance = GetVectorDistance(fClientPos, fC4Pos);
 	return true;
 }
 
