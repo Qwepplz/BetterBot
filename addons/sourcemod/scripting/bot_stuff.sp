@@ -79,7 +79,8 @@ bool g_bForceT, g_bForceCT;
 bool g_bUseCZ75[MAXPLAYERS+1], g_bUseUSP[MAXPLAYERS+1], g_bUseM4A1S[MAXPLAYERS+1], g_bDontSwitch[MAXPLAYERS+1], g_bDropWeapon[MAXPLAYERS+1], g_bHasGottenDrop[MAXPLAYERS+1], g_bCheapDrop[MAXPLAYERS+1], g_bBuyingCheapDrop[MAXPLAYERS+1];
 bool g_bIsProBot[MAXPLAYERS+1], g_bThrowGrenade[MAXPLAYERS+1], g_bUncrouch[MAXPLAYERS+1], g_bSaveLocked[MAXPLAYERS+1], g_bIssuingSaveMove[MAXPLAYERS+1];
 float g_fSaveConditionSince[MAXPLAYERS+1];
-float g_fSaveTarget[MAXPLAYERS+1][3], g_fSaveTargetDangerPos[MAXPLAYERS+1][3], g_fSaveNextRepathAt[MAXPLAYERS+1], g_fSaveNextMoveAt[MAXPLAYERS+1];
+float g_fSaveTarget[MAXPLAYERS+1][3];
+float g_fSaveNextRepathAt[MAXPLAYERS+1], g_fSaveNextMoveAt[MAXPLAYERS+1];
 float g_fBombMoveTarget[MAXPLAYERS+1][3], g_fNextBombMoveAt[MAXPLAYERS+1];
 bool g_bSaveTargetValid[MAXPLAYERS+1], g_bBombMoveTargetValid[MAXPLAYERS+1];
 float g_fSaveLookAtDebugTime[MAXPLAYERS+1];
@@ -687,7 +688,7 @@ public Action Timer_CheckPlayer(Handle hTimer, any data)
 	return Plugin_Continue;
 }
 
-bool ShouldIssueBombMove(int iClient, const float fTarget[3])
+bool ThrottleBombMove(int iClient, const float fTarget[3])
 {
 	float fNow = GetGameTime();
 	if (g_bBombMoveTargetValid[iClient]
@@ -775,7 +776,7 @@ public Action Timer_MoveToBomb(Handle hTimer, any data)
 
 		bool bShouldMoveToBomb = (bLastManStanding && fDistanceToBomb > 30.0) || fDistanceToBomb > 2000.0;
 
-		if (bShouldMoveToBomb && ShouldIssueBombMove(i, fC4Pos))
+		if (bShouldMoveToBomb && ThrottleBombMove(i, fC4Pos))
 		{
 			SwitchWeapon(i, GetPlayerWeaponSlot(i, CS_SLOT_KNIFE));
 			BotMoveTo(i, fC4Pos, FASTEST_ROUTE);
@@ -1287,14 +1288,15 @@ public void OnPlayerDeath(Event eEvent, const char[] szName, bool bDontBroadcast
 	if (IsValidClient(iClient))
 	{
 		g_bSaveLocked[iClient] = false;
+		g_fSaveConditionSince[iClient] = 0.0;
+		g_fSaveLookAtDebugTime[iClient] = 0.0;
+		g_fAttackDebugTime[iClient] = 0.0;
 		ResetClientSaveTarget(iClient);
 		ResetClientBombMove(iClient);
+
+		if (IsFakeClient(iClient))
+			CancelClientActiveLineupActions(iClient, false);
 	}
-	g_fSaveConditionSince[iClient] = 0.0;
-	g_fSaveLookAtDebugTime[iClient] = 0.0;
-	g_fAttackDebugTime[iClient] = 0.0;
-	if (IsValidClient(iClient) && IsFakeClient(iClient))
-		CancelClientActiveLineupActions(iClient, false);
 
 	UpdateAliveTeamCounts();
 }
@@ -1996,7 +1998,7 @@ public Action OnPlayerRunCmd(int iClient, int &iButtons, int &iImpulse, float fV
 			return Plugin_Changed;
 		}
 
-		if (ShouldIssueScriptMove(iClient, sNade.fPos, fNow))
+		if (ThrottleScriptMove(iClient, sNade.fPos, fNow))
 			BotMoveTo(iClient, sNade.fPos, FASTEST_ROUTE);
 		if (fDisToNade < 25.0)
 		{
@@ -3419,7 +3421,6 @@ bool GetSaveMoveTarget(int iClient, float fTarget[3])
 		return false;
 	}
 
-	Array_Copy(fDangerPos, g_fSaveTargetDangerPos[iClient], 3);
 	g_bSaveTargetValid[iClient] = true;
 	g_fSaveNextRepathAt[iClient] = fNow + RETAKE_SAVE_REPATH_INTERVAL;
 	Array_Copy(g_fSaveTarget[iClient], fTarget, 3);
@@ -3437,9 +3438,6 @@ void ResetClientSaveTarget(int iClient)
 	g_fSaveTarget[iClient][0] = 0.0;
 	g_fSaveTarget[iClient][1] = 0.0;
 	g_fSaveTarget[iClient][2] = 0.0;
-	g_fSaveTargetDangerPos[iClient][0] = 0.0;
-	g_fSaveTargetDangerPos[iClient][1] = 0.0;
-	g_fSaveTargetDangerPos[iClient][2] = 0.0;
 }
 
 bool IsTCarryingC4NearBombsite(int iClient)
@@ -4045,7 +4043,7 @@ bool ProcessScriptLineupAction(int iClient, ScriptAction iAction, ArrayList aLin
 	float fStartDistance = (iAction == ScriptAction_Peek) ? SCRIPT_PEEK_START_DISTANCE : 25.0;
 	float fStartSpeed = (iAction == ScriptAction_Peek) ? SCRIPT_PEEK_START_SPEED : 5.0;
 
-	if (ShouldIssueScriptMove(iClient, sLineup.fPos, fNow))
+	if (ThrottleScriptMove(iClient, sLineup.fPos, fNow))
 		BotMoveTo(iClient, sLineup.fPos, FASTEST_ROUTE);
 	if (fDisToLineup < fStartDistance)
 	{
@@ -4245,7 +4243,7 @@ bool ShouldCancelScriptLineupAction(int iClient, ScriptAction iAction)
 	return false;
 }
 
-bool ShouldIssueScriptMove(int iClient, const float fTarget[3], float fNow)
+bool ThrottleScriptMove(int iClient, const float fTarget[3], float fNow)
 {
 	if (GetVectorDistance(g_fBotOrigin[iClient], fTarget) < 25.0)
 		return false;
