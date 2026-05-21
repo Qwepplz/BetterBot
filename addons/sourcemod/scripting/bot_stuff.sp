@@ -21,6 +21,11 @@
 #define RETAKE_SAVE_TARGET_STEP 600.0
 #define RETAKE_SAVE_START_DELAY 5.0
 #define RETAKE_SAVE_PLANT_DISTANCE 400.0
+#define RETAKE_SAVE_REPATH_INTERVAL 1.0
+#define RETAKE_SAVE_MOVE_INTERVAL 0.5
+#define RETAKE_SAVE_TARGET_REACHED_DISTANCE 96.0
+#define BOMB_MOVE_INTERVAL 0.5
+#define SCRIPT_MOVE_INTERVAL 0.35
 #define CT_SAVE_COMMIT_MIN_BOMB_DISTANCE 1200.0
 #define CT_SAVE_COMMIT_DEFUSE_CANCEL_DISTANCE 500.0
 
@@ -74,6 +79,9 @@ bool g_bForceT, g_bForceCT;
 bool g_bUseCZ75[MAXPLAYERS+1], g_bUseUSP[MAXPLAYERS+1], g_bUseM4A1S[MAXPLAYERS+1], g_bDontSwitch[MAXPLAYERS+1], g_bDropWeapon[MAXPLAYERS+1], g_bHasGottenDrop[MAXPLAYERS+1], g_bCheapDrop[MAXPLAYERS+1], g_bBuyingCheapDrop[MAXPLAYERS+1];
 bool g_bIsProBot[MAXPLAYERS+1], g_bThrowGrenade[MAXPLAYERS+1], g_bUncrouch[MAXPLAYERS+1], g_bSaveLocked[MAXPLAYERS+1], g_bIssuingSaveMove[MAXPLAYERS+1];
 float g_fSaveConditionSince[MAXPLAYERS+1];
+float g_fSaveTarget[MAXPLAYERS+1][3], g_fSaveTargetDangerPos[MAXPLAYERS+1][3], g_fSaveNextRepathAt[MAXPLAYERS+1], g_fSaveNextMoveAt[MAXPLAYERS+1];
+float g_fBombMoveTarget[MAXPLAYERS+1][3], g_fNextBombMoveAt[MAXPLAYERS+1];
+bool g_bSaveTargetValid[MAXPLAYERS+1], g_bBombMoveTargetValid[MAXPLAYERS+1];
 float g_fSaveLookAtDebugTime[MAXPLAYERS+1];
 bool g_bCTSaveLocked;
 float g_fCTSaveConditionSince;
@@ -105,6 +113,7 @@ int g_iScriptActionIndex[MAXPLAYERS+1];
 float g_fScriptActionStart[MAXPLAYERS+1];
 float g_fScriptActionLastPos[MAXPLAYERS+1][3];
 float g_fScriptActionLastMoveTime[MAXPLAYERS+1];
+float g_fScriptNextMoveAt[MAXPLAYERS+1];
 float g_fLegacyDefaultNadeActionStart[MAXPLAYERS+1];
 float g_fLegacyDefaultNadeLastPos[MAXPLAYERS+1][3];
 float g_fLegacyDefaultNadeLastMoveTime[MAXPLAYERS+1];
@@ -678,6 +687,32 @@ public Action Timer_CheckPlayer(Handle hTimer, any data)
 	return Plugin_Continue;
 }
 
+bool ShouldIssueBombMove(int iClient, const float fTarget[3])
+{
+	float fNow = GetGameTime();
+	if (g_bBombMoveTargetValid[iClient]
+		&& fNow < g_fNextBombMoveAt[iClient]
+		&& GetVectorDistance(g_fBombMoveTarget[iClient], fTarget) < 16.0)
+		return false;
+
+	Array_Copy(fTarget, g_fBombMoveTarget[iClient], 3);
+	g_bBombMoveTargetValid[iClient] = true;
+	g_fNextBombMoveAt[iClient] = fNow + BOMB_MOVE_INTERVAL;
+	return true;
+}
+
+void ResetClientBombMove(int iClient)
+{
+	if (iClient < 1 || iClient > MaxClients)
+		return;
+
+	g_bBombMoveTargetValid[iClient] = false;
+	g_fNextBombMoveAt[iClient] = 0.0;
+	g_fBombMoveTarget[iClient][0] = 0.0;
+	g_fBombMoveTarget[iClient][1] = 0.0;
+	g_fBombMoveTarget[iClient][2] = 0.0;
+}
+
 void BuyEcoPistolAndGear(int iClient, bool bDefaultPistol, int iTeam, bool bHasDefuser)
 {
 	if (bDefaultPistol)
@@ -740,7 +775,7 @@ public Action Timer_MoveToBomb(Handle hTimer, any data)
 
 		bool bShouldMoveToBomb = (bLastManStanding && fDistanceToBomb > 30.0) || fDistanceToBomb > 2000.0;
 
-		if (bShouldMoveToBomb)
+		if (bShouldMoveToBomb && ShouldIssueBombMove(i, fC4Pos))
 		{
 			SwitchWeapon(i, GetPlayerWeaponSlot(i, CS_SLOT_KNIFE));
 			BotMoveTo(i, fC4Pos, FASTEST_ROUTE);
@@ -1061,6 +1096,11 @@ public void OnRoundStart(Event eEvent, const char[] szName, bool bDontBroadcast)
 			continue;
 
 		ClearClientScriptAction(i);
+		g_bSaveLocked[i] = false;
+		g_fSaveConditionSince[i] = 0.0;
+		ResetClientSaveTarget(i);
+		ResetClientBombMove(i);
+		g_fSaveLookAtDebugTime[i] = 0.0;
 		g_bPeekAssigned[i] = false;
 		g_bAngleAssigned[i] = false;
 
@@ -1074,9 +1114,6 @@ public void OnRoundStart(Event eEvent, const char[] szName, bool bDontBroadcast)
 		g_bCheapDrop[i] = false;
 		g_bThrowGrenade[i] = false;
 		g_bNadeResolved[i] = false;
-		g_bSaveLocked[i] = false;
-		g_fSaveConditionSince[i] = 0.0;
-		g_fSaveLookAtDebugTime[i] = 0.0;
 
 		g_iTarget[i] = -1;
 		g_iPrevTarget[i] = -1;
@@ -1120,6 +1157,8 @@ public void OnRoundEnd(Event eEvent, const char[] szName, bool bDontBroadcast)
 	for (int i = 1; i <= MaxClients; i++)
 	{
 		g_bSaveLocked[i] = false;
+		ResetClientSaveTarget(i);
+		ResetClientBombMove(i);
 
 		if (IsValidClient(i) && IsFakeClient(i))
 			CancelClientActiveLineupActions(i, false);
@@ -1158,6 +1197,7 @@ public void OnBombPlanted(Event eEvent, const char[] szName, bool bDontBroadcast
 
 	for (int i = 1; i <= MaxClients; i++)
 	{
+		ResetClientBombMove(i);
 		if (IsValidClient(i) && IsFakeClient(i))
 			CancelClientActiveLineupActions(i, false);
 	}
@@ -1245,7 +1285,11 @@ public void OnPlayerDeath(Event eEvent, const char[] szName, bool bDontBroadcast
 {
 	int iClient = GetClientOfUserId(eEvent.GetInt("userid"));
 	if (IsValidClient(iClient))
+	{
 		g_bSaveLocked[iClient] = false;
+		ResetClientSaveTarget(iClient);
+		ResetClientBombMove(iClient);
+	}
 	g_fSaveConditionSince[iClient] = 0.0;
 	g_fSaveLookAtDebugTime[iClient] = 0.0;
 	g_fAttackDebugTime[iClient] = 0.0;
@@ -1952,7 +1996,8 @@ public Action OnPlayerRunCmd(int iClient, int &iButtons, int &iImpulse, float fV
 			return Plugin_Changed;
 		}
 
-		BotMoveTo(iClient, sNade.fPos, FASTEST_ROUTE);
+		if (ShouldIssueScriptMove(iClient, sNade.fPos, fNow))
+			BotMoveTo(iClient, sNade.fPos, FASTEST_ROUTE);
 		if (fDisToNade < 25.0)
 		{
 			BotSetLookAt(iClient, "Use entity", sNade.fLook, PRIORITY_HIGH, 2.0, false, 3.0, false);
@@ -2183,6 +2228,12 @@ public void OnPlayerSpawn(Event eEvent, const char[] szName, bool bDontBroadcast
     if (!IsFakeClient(iClient))
         return;
 
+	g_bSaveLocked[iClient] = false;
+	g_fSaveConditionSince[iClient] = 0.0;
+	ResetClientSaveTarget(iClient);
+	ResetClientBombMove(iClient);
+	g_fSaveLookAtDebugTime[iClient] = 0.0;
+
     if (g_bIsProBot[iClient])
     {
         Address pLocalProfile = view_as<Address>(GetEntData(iClient, g_iBotProfileOffset));
@@ -2252,6 +2303,8 @@ public void OnClientDisconnect(int iClient)
 	g_fWeaponPickupCooldown[iClient] = 0.0;
 	g_fNadeLineupCooldown[iClient] = 0.0;
 	g_pCurrArea[iClient] = INVALID_NAV_AREA;
+	ResetClientSaveTarget(iClient);
+	ResetClientBombMove(iClient);
 	g_szCrosshairCode[iClient][0] = '\0';
 }
 
@@ -3222,6 +3275,7 @@ bool ProcessRetakeSaveBehavior(int iClient, int &iButtons)
 	{
 		SetDisposition(iClient, ENGAGE_AND_INVESTIGATE);
 		BotEquipBestWeapon(iClient, true);
+		ResetClientSaveTarget(iClient);
 		return bChanged;
 	}
 
@@ -3229,11 +3283,16 @@ bool ProcessRetakeSaveBehavior(int iClient, int &iButtons)
 	BotEquipBestWeapon(iClient, true);
 
 	float fTarget[3];
-	if (BuildSaveTarget(iClient, fTarget))
+	if (GetSaveMoveTarget(iClient, fTarget))
 	{
-		g_bIssuingSaveMove[iClient] = true;
-		BotMoveTo(iClient, fTarget, RETREAT_ROUTE);
-		g_bIssuingSaveMove[iClient] = false;
+		float fNow = GetGameTime();
+		if (fNow >= g_fSaveNextMoveAt[iClient] && GetVectorDistance(g_fBotOrigin[iClient], fTarget) > RETAKE_SAVE_TARGET_REACHED_DISTANCE)
+		{
+			g_bIssuingSaveMove[iClient] = true;
+			BotMoveTo(iClient, fTarget, RETREAT_ROUTE);
+			g_bIssuingSaveMove[iClient] = false;
+			g_fSaveNextMoveAt[iClient] = fNow + RETAKE_SAVE_MOVE_INTERVAL;
+		}
 	}
 	else
 	{
@@ -3337,13 +3396,50 @@ bool FindSaveTargetAwayFrom(int iClient, const float fDangerPos[3], float fTarge
 	return false;
 }
 
-bool BuildSaveTarget(int iClient, float fTarget[3])
+bool GetSaveMoveTarget(int iClient, float fTarget[3])
 {
 	float fDangerPos[3];
 	if (!GetSaveDangerPosition(iClient, fDangerPos))
+	{
+		ResetClientSaveTarget(iClient);
 		return false;
+	}
 
-	return FindSaveTargetAwayFrom(iClient, fDangerPos, fTarget);
+	float fNow = GetGameTime();
+	bool bNeedRepath = !g_bSaveTargetValid[iClient] || fNow >= g_fSaveNextRepathAt[iClient];
+	if (!bNeedRepath)
+	{
+		Array_Copy(g_fSaveTarget[iClient], fTarget, 3);
+		return true;
+	}
+
+	if (!FindSaveTargetAwayFrom(iClient, fDangerPos, g_fSaveTarget[iClient]))
+	{
+		ResetClientSaveTarget(iClient);
+		return false;
+	}
+
+	Array_Copy(fDangerPos, g_fSaveTargetDangerPos[iClient], 3);
+	g_bSaveTargetValid[iClient] = true;
+	g_fSaveNextRepathAt[iClient] = fNow + RETAKE_SAVE_REPATH_INTERVAL;
+	Array_Copy(g_fSaveTarget[iClient], fTarget, 3);
+	return true;
+}
+
+void ResetClientSaveTarget(int iClient)
+{
+	if (iClient < 1 || iClient > MaxClients)
+		return;
+
+	g_bSaveTargetValid[iClient] = false;
+	g_fSaveNextRepathAt[iClient] = 0.0;
+	g_fSaveNextMoveAt[iClient] = 0.0;
+	g_fSaveTarget[iClient][0] = 0.0;
+	g_fSaveTarget[iClient][1] = 0.0;
+	g_fSaveTarget[iClient][2] = 0.0;
+	g_fSaveTargetDangerPos[iClient][0] = 0.0;
+	g_fSaveTargetDangerPos[iClient][1] = 0.0;
+	g_fSaveTargetDangerPos[iClient][2] = 0.0;
 }
 
 bool IsTCarryingC4NearBombsite(int iClient)
@@ -3818,6 +3914,7 @@ void AssignClientScriptLineupAction(int iClient, int iLineup, ScriptAction iActi
 	g_iScriptActionIndex[iClient] = iLineup;
 	g_fScriptActionStart[iClient] = fNow;
 	g_fScriptActionLastMoveTime[iClient] = fNow;
+	g_fScriptNextMoveAt[iClient] = 0.0;
 	GetClientAbsOrigin(iClient, g_fScriptActionLastPos[iClient]);
 }
 
@@ -3948,7 +4045,8 @@ bool ProcessScriptLineupAction(int iClient, ScriptAction iAction, ArrayList aLin
 	float fStartDistance = (iAction == ScriptAction_Peek) ? SCRIPT_PEEK_START_DISTANCE : 25.0;
 	float fStartSpeed = (iAction == ScriptAction_Peek) ? SCRIPT_PEEK_START_SPEED : 5.0;
 
-	BotMoveTo(iClient, sLineup.fPos, FASTEST_ROUTE);
+	if (ShouldIssueScriptMove(iClient, sLineup.fPos, fNow))
+		BotMoveTo(iClient, sLineup.fPos, FASTEST_ROUTE);
 	if (fDisToLineup < fStartDistance)
 	{
 		BotSetLookAt(iClient, "Use entity", sLineup.fLook, PRIORITY_HIGH, 2.0, false, 3.0, false);
@@ -4145,6 +4243,18 @@ bool ShouldCancelScriptLineupAction(int iClient, ScriptAction iAction)
 		return true;
 
 	return false;
+}
+
+bool ShouldIssueScriptMove(int iClient, const float fTarget[3], float fNow)
+{
+	if (GetVectorDistance(g_fBotOrigin[iClient], fTarget) < 25.0)
+		return false;
+
+	if (fNow < g_fScriptNextMoveAt[iClient])
+		return false;
+
+	g_fScriptNextMoveAt[iClient] = fNow + SCRIPT_MOVE_INTERVAL;
+	return true;
 }
 
 bool IsScriptLineupMovementStale(int iClient, float fNow)
@@ -5017,6 +5127,7 @@ stock void ClearClientScriptAction(int iClient)
 	g_iScriptActionIndex[iClient] = -1;
 	g_fScriptActionStart[iClient] = 0.0;
 	g_fScriptActionLastMoveTime[iClient] = 0.0;
+	g_fScriptNextMoveAt[iClient] = 0.0;
 	g_fScriptActionLastPos[iClient][0] = 0.0;
 	g_fScriptActionLastPos[iClient][1] = 0.0;
 	g_fScriptActionLastPos[iClient][2] = 0.0;
@@ -5026,6 +5137,7 @@ stock void ResetClientLegacyDefaultNadeTracking(int iClient)
 {
 	g_fLegacyDefaultNadeActionStart[iClient] = 0.0;
 	g_fLegacyDefaultNadeLastMoveTime[iClient] = 0.0;
+	g_fScriptNextMoveAt[iClient] = 0.0;
 	g_fLegacyDefaultNadeLastPos[iClient][0] = 0.0;
 	g_fLegacyDefaultNadeLastPos[iClient][1] = 0.0;
 	g_fLegacyDefaultNadeLastPos[iClient][2] = 0.0;
