@@ -24,6 +24,8 @@
 #define RETAKE_SAVE_REPATH_INTERVAL 1.0
 #define RETAKE_SAVE_MOVE_INTERVAL 0.5
 #define RETAKE_SAVE_TARGET_REACHED_DISTANCE 96.0
+#define RETAKE_SAVE_REACH_TIMEOUT 6.0
+#define RETAKE_SAVE_PROGRESS_THRESHOLD 64.0
 #define BOMB_MOVE_INTERVAL 0.5
 #define SCRIPT_MOVE_INTERVAL 0.35
 #define CT_SAVE_COMMIT_MIN_BOMB_DISTANCE 1200.0
@@ -81,11 +83,16 @@ bool g_bIsProBot[MAXPLAYERS+1], g_bThrowGrenade[MAXPLAYERS+1], g_bUncrouch[MAXPL
 float g_fSaveConditionSince[MAXPLAYERS+1];
 float g_fSaveTarget[MAXPLAYERS+1][3];
 float g_fSaveNextRepathAt[MAXPLAYERS+1], g_fSaveNextMoveAt[MAXPLAYERS+1];
+float g_fSaveTargetSetTime[MAXPLAYERS+1];
+float g_fSaveLastProgressDist[MAXPLAYERS+1];
+float g_fSaveLastProgressTime[MAXPLAYERS+1];
+bool g_bSaveSettled[MAXPLAYERS+1];
 float g_fBombMoveTarget[MAXPLAYERS+1][3], g_fNextBombMoveAt[MAXPLAYERS+1];
 bool g_bSaveTargetValid[MAXPLAYERS+1], g_bBombMoveTargetValid[MAXPLAYERS+1];
 float g_fSaveLookAtDebugTime[MAXPLAYERS+1];
 bool g_bCTSaveLocked;
 float g_fCTSaveConditionSince;
+bool g_bSaveActiveCache[MAXPLAYERS+1];
 int g_iProfileRank[MAXPLAYERS+1], g_iPlayerColor[MAXPLAYERS+1], g_iTarget[MAXPLAYERS+1], g_iPrevTarget[MAXPLAYERS+1], g_iDoingSmokeNum[MAXPLAYERS+1], g_iActiveWeapon[MAXPLAYERS+1];
 int g_iCurrentRound, g_iRoundsPlayed, g_iCTScore, g_iTScore;
 int g_iProfileRankOffset, g_iPlayerColorOffset;
@@ -96,6 +103,8 @@ float g_fRoundStart, g_fFreezeTimeEnd;
 float g_fLookAngleMaxAccel[MAXPLAYERS+1], g_fReactionTime[MAXPLAYERS+1], g_fAggression[MAXPLAYERS+1], g_fShootTimestamp[MAXPLAYERS+1], g_fThrowNadeTimestamp[MAXPLAYERS+1], g_fCrouchTimestamp[MAXPLAYERS+1];
 float g_fSniperRetreatCooldown[MAXPLAYERS+1];
 float g_fBombPos[3];
+float g_fBombsitePositions[16][3];
+int g_iBombsiteCount;
 StringMap g_smHumanTeammateColors;
 enum ScriptAction
 {
@@ -553,7 +562,18 @@ void InitializeMapRuntime()
 	ParseScriptLineups("configs/bot_peeks.txt", "Peeks", szMap, g_aPeeks);
 	ParseScriptLineups("configs/bot_angles.txt", "Angles", szMap, g_aAngles);
 
-    g_bIsBombScenario = (FindEntityByClassname(-1, "func_bomb_target") != -1);
+    g_bIsBombScenario = false;
+    g_iBombsiteCount = 0;
+    int iBombsiteEnt = -1;
+    while ((iBombsiteEnt = FindEntityByClassname(iBombsiteEnt, "func_bomb_target")) != -1)
+    {
+        g_bIsBombScenario = true;
+        if (g_iBombsiteCount < 16)
+        {
+            GetEntPropVector(iBombsiteEnt, Prop_Send, "m_vecOrigin", g_fBombsitePositions[g_iBombsiteCount]);
+            g_iBombsiteCount++;
+        }
+    }
     g_bIsHostageScenario = (FindEntityByClassname(-1, "func_hostage_rescue") != -1);
 
 	if (g_hCheckPlayerTimer == null)
@@ -740,12 +760,8 @@ public Action Timer_MoveToBomb(Handle hTimer, any data)
 	if (!g_bBombPlanted)
 		return Plugin_Continue;
 
-	int iPlantedC4 = FindEntityByClassname(-1, "planted_c4");
-	if (!IsValidEntity(iPlantedC4))
-		return Plugin_Continue;
-
 	float fC4Pos[3];
-	GetEntPropVector(iPlantedC4, Prop_Send, "m_vecOrigin", fC4Pos);
+	Array_Copy(g_fBombPos, fC4Pos, 3);
 
 	bool bLastManStanding = (g_iAliveCountT == 0 && g_iAliveCountCT == 1);
 
@@ -1619,17 +1635,6 @@ public MRESReturn CCSBot_CanSeeLooseBomb(int iClient, DHookReturn hReturn)
 	return MRES_Ignored;
 }
 
-bool IsSaveConflictObjective(TaskType iTask, int iTeam)
-{
-	if (iTeam == CS_TEAM_CT)
-		return (iTask == DEFUSE_BOMB || iTask == FIND_TICKING_BOMB);
-
-	if (iTeam == CS_TEAM_T)
-		return (iTask == PLANT_BOMB || iTask == GUARD_LOOSE_BOMB);
-
-	return false;
-}
-
 public MRESReturn CCSBot_MoveTo(int iClient, DHookParam hParams)
 {
 	if (!IsValidClient(iClient) || !IsFakeClient(iClient) || hParams == null)
@@ -1638,26 +1643,13 @@ public MRESReturn CCSBot_MoveTo(int iClient, DHookParam hParams)
 	if (g_bIssuingSaveMove[iClient])
 		return MRES_Ignored;
 
-	int iTeam = GetClientTeam(iClient);
-	bool bSaveActive = (iTeam == CS_TEAM_CT && g_bBombPlanted) ? IsCTCommittedToSave(iClient) : ShouldSaveInsteadOfRetake(iClient);
-	if (!bSaveActive)
-		return MRES_Ignored;
-
-	int iRoute = hParams.Get(2);
-	if (iRoute == view_as<int>(RETREAT_ROUTE))
+	if (!g_bSaveActiveCache[iClient])
 		return MRES_Ignored;
 
 	if (IsSavingBotUnderDirectThreat(iClient))
 		return MRES_Ignored;
 
-	TaskType iTask = GetTask(iClient);
-	if (IsSaveConflictObjective(iTask, iTeam))
-	{
-		LogCTCommittedSaveObjectiveBlock(iClient, "MoveTo", "objective");
-		return MRES_Supercede;
-	}
-
-	return MRES_Ignored;
+	return MRES_Supercede;
 }
 
 public MRESReturn CCSBot_SetLookAt(int iClient, DHookParam hParams)
@@ -1670,7 +1662,7 @@ public MRESReturn CCSBot_SetLookAt(int iClient, DHookParam hParams)
 	char szDesc[64];
 	DHookGetParamString(hParams, 1, szDesc, sizeof(szDesc));
 	int iTeam = GetClientTeam(iClient);
-	bool bSaveActive = (iTeam == CS_TEAM_CT && g_bBombPlanted) ? IsCTCommittedToSave(iClient) : ShouldSaveInsteadOfRetake(iClient);
+	bool bSaveActive = g_bSaveActiveCache[iClient];
 
 	if (strcmp(szDesc, "Defuse bomb") == 0 || strcmp(szDesc, "Use entity") == 0 || strcmp(szDesc, "Open door") == 0 || strcmp(szDesc, "Hostage") == 0 || strcmp(szDesc, "Avoid Flashbang") == 0)
 	{
@@ -1880,6 +1872,7 @@ public Action OnPlayerRunCmd(int iClient, int &iButtons, int &iImpulse, float fV
 	}
 
 	bool bShouldSaveInsteadOfRetake = ShouldSaveInsteadOfRetake(iClient);
+	g_bSaveActiveCache[iClient] = bShouldSaveInsteadOfRetake;
 
 	int iButtonsIn = iButtons;
 	bool bCTPlantedBombAttackRebuild = g_bBombPlanted && GetClientTeam(iClient) == CS_TEAM_CT && g_bIsProBot[iClient];
@@ -1891,13 +1884,16 @@ public Action OnPlayerRunCmd(int iClient, int &iButtons, int &iImpulse, float fV
 
 	if (bShouldSaveInsteadOfRetake)
 	{
-		bool bSaveCommandChanged = ProcessRetakeSaveBehavior(iClient, iButtons);
-		LogRetakeSaveDebug(iClient);
-		if (bSaveCommandChanged)
+		ProcessRetakeSaveBehavior(iClient, iButtons);
+		if (g_bSaveSettled[iClient])
 		{
-			LogAttackStateDebug(iClient, iButtonsIn, iButtonsAfterPreClear, iButtons, iButtons, view_as<int>(GetTask(iClient)), eDispositionBeforeSave, GetDisposition(iClient), !!GetEntData(iClient, g_iEnemyVisibleOffset), g_iTarget[iClient], GetClientAimTarget(iClient, true), g_fTargetPos[iClient], iDefIndex, bWeaponCoveredByPluginFire, true, BotMimic_IsPlayerMimicing(iClient));
-			return Plugin_Changed;
+			iButtons &= ~(IN_FORWARD | IN_BACK | IN_MOVELEFT | IN_MOVERIGHT | IN_JUMP);
+			fVel[0] = 0.0;
+			fVel[1] = 0.0;
+			fVel[2] = 0.0;
 		}
+		LogRetakeSaveDebug(iClient);
+		return Plugin_Changed;
 	}
 	else
 	{
@@ -3273,16 +3269,14 @@ bool ProcessRetakeSaveBehavior(int iClient, int &iButtons)
 	g_bThrowGrenade[iClient] = false;
 	g_bNadeResolved[iClient] = false;
 
-	if (IsSavingBotUnderDirectThreat(iClient))
-	{
-		SetDisposition(iClient, ENGAGE_AND_INVESTIGATE);
-		BotEquipBestWeapon(iClient, true);
-		ResetClientSaveTarget(iClient);
-		return bChanged;
-	}
-
 	SetDisposition(iClient, SELF_DEFENSE);
 	BotEquipBestWeapon(iClient, true);
+
+	if (g_bSaveSettled[iClient])
+		return bChanged;
+
+	if (IsSavingBotUnderDirectThreat(iClient))
+		return bChanged;
 
 	float fTarget[3];
 	if (GetSaveMoveTarget(iClient, fTarget))
@@ -3296,9 +3290,14 @@ bool ProcessRetakeSaveBehavior(int iClient, int &iButtons)
 			g_fSaveNextMoveAt[iClient] = fNow + RETAKE_SAVE_MOVE_INTERVAL;
 		}
 	}
-	else
+	else if (!g_bSaveSettled[iClient])
 	{
-		BotTryToRetreat(iClient);
+		float fNow = GetGameTime();
+		if (fNow >= g_fSaveNextMoveAt[iClient])
+		{
+			BotTryToRetreat(iClient);
+			g_fSaveNextMoveAt[iClient] = fNow + RETAKE_SAVE_MOVE_INTERVAL;
+		}
 	}
 
 	return bChanged;
@@ -3306,9 +3305,6 @@ bool ProcessRetakeSaveBehavior(int iClient, int &iButtons)
 
 bool IsSavingBotUnderDirectThreat(int iClient)
 {
-	if (GetEntData(iClient, g_iEnemyVisibleOffset) != 0)
-		return true;
-
 	if (GetEntData(iClient, g_iBotNearbyEnemiesOffset) > 0)
 		return true;
 
@@ -3357,49 +3353,43 @@ bool FindSaveTargetAwayFrom(int iClient, const float fDangerPos[3], float fTarge
 	float fBotPos[3];
 	GetClientAbsOrigin(iClient, fBotPos);
 
-	float fAway[3];
-	SubtractVectors(fBotPos, fDangerPos, fAway);
-	fAway[2] = 0.0;
-	float fLen = GetVectorLength(fAway);
-	if (fLen < 1.0)
+	if (g_pCurrArea[iClient] == INVALID_NAV_AREA)
+		return false;
+
+	float fCurrentDangerDist = GetVectorDistance(fBotPos, fDangerPos);
+
+	ArrayStack hAreas = NavMesh_CollectSurroundingAreas(g_pCurrArea[iClient], RETAKE_SAVE_FAR_DISTANCE);
+	if (hAreas == null)
+		return false;
+
+	float fBestDist = fCurrentDangerDist;
+	bool bFound = false;
+
+	while (!hAreas.Empty)
 	{
-		fAway[0] = GetRandomFloat(-1.0, 1.0);
-		fAway[1] = GetRandomFloat(-1.0, 1.0);
-		fLen = GetVectorLength(fAway);
-		if (fLen < 0.01)
-		{
-			fAway[0] = 1.0;
-			fLen = 1.0;
-		}
-	}
-	ScaleVector(fAway, 1.0 / fLen);
-
-	for (float fStep = RETAKE_SAVE_TARGET_STEP; fStep <= RETAKE_SAVE_FAR_DISTANCE; fStep += RETAKE_SAVE_TARGET_STEP)
-	{
-		float fCandidate[3];
-		fCandidate[0] = fBotPos[0] + fAway[0] * fStep;
-		fCandidate[1] = fBotPos[1] + fAway[1] * fStep;
-		fCandidate[2] = fBotPos[2];
-
-		CNavArea pArea = NavMesh_GetNearestArea(fCandidate, true, RETAKE_SAVE_MOVE_DISTANCE);
-		if (pArea == INVALID_NAV_AREA)
-			continue;
-
+		CNavArea pArea = hAreas.Pop();
 		float fAreaCenter[3];
 		if (!NavMeshArea_GetCenter(pArea, fAreaCenter))
 			continue;
-		if (GetVectorDistance(fAreaCenter, fDangerPos) <= GetVectorDistance(fBotPos, fDangerPos))
-			continue;
 
-		Array_Copy(fAreaCenter, fTarget, 3);
-		return true;
+		float fDist = GetVectorDistance(fAreaCenter, fDangerPos);
+		if (fDist > fBestDist)
+		{
+			fBestDist = fDist;
+			Array_Copy(fAreaCenter, fTarget, 3);
+			bFound = true;
+		}
 	}
 
-	return false;
+	delete hAreas;
+	return bFound;
 }
 
 bool GetSaveMoveTarget(int iClient, float fTarget[3])
 {
+	if (g_bSaveSettled[iClient])
+		return false;
+
 	float fDangerPos[3];
 	if (!GetSaveDangerPosition(iClient, fDangerPos))
 	{
@@ -3408,6 +3398,24 @@ bool GetSaveMoveTarget(int iClient, float fTarget[3])
 	}
 
 	float fNow = GetGameTime();
+
+	if (g_bSaveTargetValid[iClient])
+	{
+		float fDistToTarget = GetVectorDistance(g_fBotOrigin[iClient], g_fSaveTarget[iClient]);
+
+		if (fDistToTarget < g_fSaveLastProgressDist[iClient] - RETAKE_SAVE_PROGRESS_THRESHOLD)
+		{
+			g_fSaveLastProgressDist[iClient] = fDistToTarget;
+			g_fSaveLastProgressTime[iClient] = fNow;
+		}
+
+		if (fDistToTarget > RETAKE_SAVE_TARGET_REACHED_DISTANCE && (fNow - g_fSaveLastProgressTime[iClient]) >= RETAKE_SAVE_REACH_TIMEOUT)
+		{
+			g_bSaveSettled[iClient] = true;
+			return false;
+		}
+	}
+
 	bool bNeedRepath = !g_bSaveTargetValid[iClient] || fNow >= g_fSaveNextRepathAt[iClient];
 	if (!bNeedRepath)
 	{
@@ -3417,12 +3425,15 @@ bool GetSaveMoveTarget(int iClient, float fTarget[3])
 
 	if (!FindSaveTargetAwayFrom(iClient, fDangerPos, g_fSaveTarget[iClient]))
 	{
-		ResetClientSaveTarget(iClient);
+		g_bSaveSettled[iClient] = true;
 		return false;
 	}
 
 	g_bSaveTargetValid[iClient] = true;
 	g_fSaveNextRepathAt[iClient] = fNow + RETAKE_SAVE_REPATH_INTERVAL;
+	g_fSaveTargetSetTime[iClient] = fNow;
+	g_fSaveLastProgressDist[iClient] = GetVectorDistance(g_fBotOrigin[iClient], g_fSaveTarget[iClient]);
+	g_fSaveLastProgressTime[iClient] = fNow;
 	Array_Copy(g_fSaveTarget[iClient], fTarget, 3);
 	return true;
 }
@@ -3433,8 +3444,12 @@ void ResetClientSaveTarget(int iClient)
 		return;
 
 	g_bSaveTargetValid[iClient] = false;
+	g_bSaveSettled[iClient] = false;
 	g_fSaveNextRepathAt[iClient] = 0.0;
 	g_fSaveNextMoveAt[iClient] = 0.0;
+	g_fSaveTargetSetTime[iClient] = 0.0;
+	g_fSaveLastProgressDist[iClient] = 0.0;
+	g_fSaveLastProgressTime[iClient] = 0.0;
 	g_fSaveTarget[iClient][0] = 0.0;
 	g_fSaveTarget[iClient][1] = 0.0;
 	g_fSaveTarget[iClient][2] = 0.0;
@@ -3521,11 +3536,10 @@ void ClearBombGuardThreat(int iClient, int iThreat, const float fThreatPos[3])
 
 bool GetPlantedBombPosition(float fC4Pos[3])
 {
-	int iPlantedC4 = FindEntityByClassname(-1, "planted_c4");
-	if (!IsValidEntity(iPlantedC4))
+	if (!g_bBombPlanted)
 		return false;
 
-	GetEntPropVector(iPlantedC4, Prop_Send, "m_vecOrigin", fC4Pos);
+	Array_Copy(g_fBombPos, fC4Pos, 3);
 	return true;
 }
 
@@ -3543,26 +3557,26 @@ bool GetDistanceToPlantedBomb(int iClient, float &fDistance)
 
 bool GetNearestBombsitePosition(int iClient, float fBombPos[3])
 {
-	bool bFound = false;
-	float fBestDistance = -1.0;
+	if (g_iBombsiteCount <= 0)
+		return false;
+
 	float fClientPos[3];
 	GetClientAbsOrigin(iClient, fClientPos);
 
-	int iEnt = -1;
-	while ((iEnt = FindEntityByClassname(iEnt, "func_bomb_target")) != -1)
+	float fBestDistance = -1.0;
+	int iBest = -1;
+	for (int i = 0; i < g_iBombsiteCount; i++)
 	{
-		float fSitePos[3];
-		GetEntPropVector(iEnt, Prop_Send, "m_vecOrigin", fSitePos);
-		float fDistance = GetVectorDistance(fClientPos, fSitePos);
-		if (!bFound || fDistance < fBestDistance)
+		float fDistance = GetVectorDistance(fClientPos, g_fBombsitePositions[i]);
+		if (iBest == -1 || fDistance < fBestDistance)
 		{
-			Array_Copy(fSitePos, fBombPos, 3);
 			fBestDistance = fDistance;
-			bFound = true;
+			iBest = i;
 		}
 	}
 
-	return bFound;
+	Array_Copy(g_fBombsitePositions[iBest], fBombPos, 3);
+	return true;
 }
 
 int FindTerroristNearPlantedBomb(const float fC4Pos[3], float fRange, float fThreatPos[3])
