@@ -75,6 +75,9 @@ enum
 	DEFIDX_INCENDIARY = 48
 };
 
+static const int g_iAllNades[] = {DEFIDX_HE, DEFIDX_MOLOTOV, DEFIDX_INCENDIARY, DEFIDX_FLASH, DEFIDX_SMOKE};
+static const int g_iDenialNades[] = {DEFIDX_MOLOTOV, DEFIDX_INCENDIARY, DEFIDX_HE};
+
 char g_szCrosshairCode[MAXPLAYERS+1][35], g_szPreviousBuy[MAXPLAYERS+1][128];
 bool g_bIsBombScenario, g_bIsHostageScenario, g_bFreezetimeEnd, g_bBombPlanted, g_bRoundDecided, g_bHalftimeSwitch, g_bIsCompetitive;
 bool g_bForceT, g_bForceCT;
@@ -589,13 +592,10 @@ void InitializeMapRuntime()
 	for (int i = 1; i <= MaxClients; i++)
 	{
 		if (IsClientInGame(i))
+		{
 			InitializeClientProfileData(i);
-	}
-
-	for (int i = 1; i <= MaxClients; i++)
-	{
-		if (IsClientInGame(i))
 			SetPlayerTeammateColor(i);
+		}
 	}
 }
 
@@ -955,31 +955,18 @@ void CollectCheapDroppers(ArrayList aTeamBots, int iTeam)
     SortADTArrayCustom(aTeamBots, Sort_BotMoneyDesc);
 }
 
+void SafeDeleteTimer(Handle &hTimer)
+{
+	delete hTimer;
+	hTimer = null;
+}
+
 public void OnMapEnd()
 {
-	if (g_hCheckPlayerTimer != null)
-	{
-		delete g_hCheckPlayerTimer;
-		g_hCheckPlayerTimer = null;
-	}
-
-	if (g_hMoveToBombTimer != null)
-	{
-		delete g_hMoveToBombTimer;
-		g_hMoveToBombTimer = null;
-	}
-
-	if (g_hPlayerResourceRetryTimer != null)
-	{
-		delete g_hPlayerResourceRetryTimer;
-		g_hPlayerResourceRetryTimer = null;
-	}
-
-	if (g_hDropWeaponsTimer != null)
-	{
-		delete g_hDropWeaponsTimer;
-		g_hDropWeaponsTimer = null;
-	}
+	SafeDeleteTimer(g_hCheckPlayerTimer);
+	SafeDeleteTimer(g_hMoveToBombTimer);
+	SafeDeleteTimer(g_hPlayerResourceRetryTimer);
+	SafeDeleteTimer(g_hDropWeaponsTimer);
 
 	g_iPlayerResourceRetryCount = 0;
 	g_bPlayerResourceRetryLogged = false;
@@ -1296,8 +1283,7 @@ public void OnBombBeginPlant(Event eEvent, const char[] szName, bool bDontBroadc
 		if (!IsItMyChance(30.0))
 			continue;
 
-		int iNades[] = {DEFIDX_MOLOTOV, DEFIDX_INCENDIARY, DEFIDX_HE};
-		int iNade = FindNadeByDefIndex(i, iNades, sizeof(iNades));
+		int iNade = FindNadeByDefIndex(i, g_iDenialNades, sizeof(g_iDenialNades));
 		if (iNade != -1)
 			ProcessGrenadeThrow(i, fPlanterPos, iNade);
 	}
@@ -1612,28 +1598,31 @@ public MRESReturn CCSBot_OnAudibleEvent(int iBot, DHookParam hParams)
 
 public MRESReturn CCSBot_CanSeeLooseBomb(int iClient, DHookReturn hReturn)
 {
-	if (!g_bBombPlanted && g_bIsBombScenario && g_bFreezetimeEnd && ShouldSaveInsteadOfRetake(iClient))
+	if (!g_bBombPlanted && g_bIsBombScenario && g_bFreezetimeEnd)
 	{
-		hReturn.Value = false;
-		return MRES_Supercede;
-	}
-
-	if (!g_bBombPlanted && g_bIsBombScenario && g_bFreezetimeEnd && GetClientTeam(iClient) == CS_TEAM_CT)
-	{
-		int iLooseC4 = FindLooseBomb();
-		if (iLooseC4 != -1)
+		if (ShouldSaveInsteadOfRetake(iClient))
 		{
-			if (GetTask(iClient) != GUARD_LOOSE_BOMB && GetEntData(iClient, g_iBotNearbyEnemiesOffset) == 0)
+			hReturn.Value = false;
+			return MRES_Supercede;
+		}
+
+		if (GetClientTeam(iClient) == CS_TEAM_CT)
+		{
+			int iLooseC4 = FindLooseBomb();
+			if (iLooseC4 != -1)
 			{
-				float fC4Pos[3];
-				GetEntPropVector(iLooseC4, Prop_Send, "m_vecOrigin", fC4Pos);
+				if (GetTask(iClient) != GUARD_LOOSE_BOMB && GetEntData(iClient, g_iBotNearbyEnemiesOffset) == 0)
+				{
+					float fC4Pos[3];
+					GetEntPropVector(iLooseC4, Prop_Send, "m_vecOrigin", fC4Pos);
 
-				if (GetVectorDistance(g_fBotOrigin[iClient], fC4Pos) > 500.0)
-					BotMoveTo(iClient, fC4Pos, FASTEST_ROUTE);
+					if (GetVectorDistance(g_fBotOrigin[iClient], fC4Pos) > 500.0)
+						BotMoveTo(iClient, fC4Pos, FASTEST_ROUTE);
+				}
+
+				hReturn.Value = true;
+				return MRES_Override;
 			}
-
-			hReturn.Value = true;
-			return MRES_Override;
 		}
 	}
 
@@ -1723,8 +1712,7 @@ public MRESReturn CCSBot_SetLookAt(int iClient, DHookParam hParams)
 			float fPos[3];
 			DHookGetParamVector(hParams, 2, fPos);
 
-			int iNades[] = {DEFIDX_HE, DEFIDX_MOLOTOV, DEFIDX_INCENDIARY, DEFIDX_FLASH, DEFIDX_SMOKE};
-			int iNade = FindNadeByDefIndex(iClient, iNades, sizeof(iNades));
+			int iNade = FindNadeByDefIndex(iClient, g_iAllNades, sizeof(g_iAllNades));
 			if (iNade != -1 && ProcessGrenadeThrow(iClient, fPos, iNade))
 				return MRES_Supercede;
 		}
@@ -1755,8 +1743,7 @@ public MRESReturn CCSBot_SetLookAt(int iClient, DHookParam hParams)
 
 		if (CanThrowNade(iClient) && IsItMyChance(3.0) && GetTask(iClient) != ESCAPE_FROM_BOMB && GetTask(iClient) != ESCAPE_FROM_FLAMES && GetEntityMoveType(iClient) != MOVETYPE_LADDER)
 		{
-			int iNades[] = {DEFIDX_HE, DEFIDX_MOLOTOV, DEFIDX_INCENDIARY, DEFIDX_FLASH, DEFIDX_SMOKE};
-			int iNade = FindNadeByDefIndex(iClient, iNades, sizeof(iNades));
+			int iNade = FindNadeByDefIndex(iClient, g_iAllNades, sizeof(g_iAllNades));
 			if (iNade != -1 && (ProcessGrenadeThrow(iClient, g_fOriginalNoisePos[iClient], iNade) || ProcessGrenadeThrow(iClient, fNoisePos, iNade)))
 				return MRES_Supercede;
 		}
@@ -1789,8 +1776,7 @@ public MRESReturn CCSBot_SetLookAt(int iClient, DHookParam hParams)
 
 		if (CanThrowNade(iClient) && IsItMyChance(25.0) && GetTask(iClient) != ESCAPE_FROM_BOMB && GetTask(iClient) != ESCAPE_FROM_FLAMES && GetEntityMoveType(iClient) != MOVETYPE_LADDER)
 		{
-			int iNades[] = {DEFIDX_HE, DEFIDX_MOLOTOV, DEFIDX_INCENDIARY, DEFIDX_FLASH, DEFIDX_SMOKE};
-			int iNade = FindNadeByDefIndex(iClient, iNades, sizeof(iNades));
+			int iNade = FindNadeByDefIndex(iClient, g_iAllNades, sizeof(g_iAllNades));
 			if (iNade != -1 && (ProcessGrenadeThrow(iClient, g_fOriginalNoisePos[iClient], iNade) || ProcessGrenadeThrow(iClient, fPos, iNade)))
 				return MRES_Supercede;
 		}
@@ -2036,20 +2022,22 @@ public Action OnPlayerRunCmd(int iClient, int &iButtons, int &iImpulse, float fV
 			SwitchWeapon(iClient, GetPlayerWeaponSlot(iClient, CS_SLOT_KNIFE));
 	}
 
-	if (g_bIsProBot[iClient] && !g_bBombPlanted && GetTask(iClient) != COLLECT_HOSTAGES && GetTask(iClient) != RESCUE_HOSTAGES && GetTask(iClient) != GUARD_LOOSE_BOMB && GetTask(iClient) != PLANT_BOMB && GetTask(iClient) != ESCAPE_FROM_FLAMES)
-	{
-		if (fNow >= g_fWeaponPickupCooldown[iClient])
-		{
-			ProcessWeaponPickup(iClient);
-			g_fWeaponPickupCooldown[iClient] = fNow + 0.5;
-		}
-	}
-
 	if (g_bIsProBot[iClient])
+	{
+		if (!g_bBombPlanted && GetTask(iClient) != COLLECT_HOSTAGES && GetTask(iClient) != RESCUE_HOSTAGES && GetTask(iClient) != GUARD_LOOSE_BOMB && GetTask(iClient) != PLANT_BOMB && GetTask(iClient) != ESCAPE_FROM_FLAMES)
+		{
+			if (fNow >= g_fWeaponPickupCooldown[iClient])
+			{
+				ProcessWeaponPickup(iClient);
+				g_fWeaponPickupCooldown[iClient] = fNow + 0.5;
+			}
+		}
+
 		ProcessBombGuardClearBehavior(iClient, iButtons);
 
-	if (g_bIsProBot[iClient] && GetDisposition(iClient) != IGNORE_ENEMIES)
-		ProcessCombat(iClient, iButtons, fVel, fAngles, iDefIndex, fSpeed, fNow);
+		if (GetDisposition(iClient) != IGNORE_ENEMIES)
+			ProcessCombat(iClient, iButtons, fVel, fAngles, iDefIndex, fSpeed, fNow);
+	}
 
 	int iButtonsAfterCombat = iButtons;
 	if (g_bIsProBot[iClient] && CanThrowNade(iClient) && !g_bThrowGrenade[iClient] && !BotMimic_IsPlayerMimicing(iClient) && GetEntityMoveType(iClient) != MOVETYPE_LADDER && GetTask(iClient) != ESCAPE_FROM_BOMB && GetTask(iClient) != ESCAPE_FROM_FLAMES)
@@ -2063,8 +2051,7 @@ public Action OnPlayerRunCmd(int iClient, int &iButtons, int &iImpulse, float fV
 
 			if (!IsPointVisible(fClientEyes, g_fBombPos))
 			{
-				int iDenialNades[] = {DEFIDX_MOLOTOV, DEFIDX_INCENDIARY, DEFIDX_HE};
-				int iNade = FindNadeByDefIndex(iClient, iDenialNades, sizeof(iDenialNades));
+				int iNade = FindNadeByDefIndex(iClient, g_iDenialNades, sizeof(g_iDenialNades));
 				if (iNade != -1)
 					ProcessGrenadeThrow(iClient, g_fBombPos, iNade);
 			}
@@ -2149,7 +2136,8 @@ void ProcessCombat(int iClient, int &iButtons, float fVel[3], float fAngles[3], 
 		BotMimic_StopPlayerMimic(iClient);
 	}
 
-	if ((eItems_GetWeaponSlotByDefIndex(iDefIndex) == CS_SLOT_KNIFE || eItems_GetWeaponSlotByDefIndex(iDefIndex) == CS_SLOT_GRENADE) && GetTask(iClient) != ESCAPE_FROM_BOMB && GetTask(iClient) != ESCAPE_FROM_FLAMES)
+	int iWeaponSlot = eItems_GetWeaponSlotByDefIndex(iDefIndex);
+	if ((iWeaponSlot == CS_SLOT_KNIFE || iWeaponSlot == CS_SLOT_GRENADE) && GetTask(iClient) != ESCAPE_FROM_BOMB && GetTask(iClient) != ESCAPE_FROM_FLAMES)
 		BotEquipBestWeapon(iClient, true);
 
 	if (bIsEnemyVisible && GetEntityMoveType(iClient) != MOVETYPE_LADDER)
@@ -2211,13 +2199,9 @@ void ProcessCombat(int iClient, int &iButtons, float fVel[3], float fAngles[3], 
 		fClientLoc[2] += HalfHumanHeight;
 		if (fNow >= g_fCrouchTimestamp[iClient] && !GetEntProp(g_iActiveWeapon[iClient], Prop_Data, "m_bInReload") && IsPointVisible(fClientLoc, g_fTargetPos[iClient]) && fOnTarget > fAimTolerance && fTargetDistance < 2000.0 && IsRifleOrHeavy(iDefIndex))
 			iButtons |= IN_DUCK;
+	}
 
-		g_iPrevTarget[iClient] = g_iTarget[iClient];
-	}
-	else
-	{
-		g_iPrevTarget[iClient] = g_iTarget[iClient];
-	}
+	g_iPrevTarget[iClient] = g_iTarget[iClient];
 }
 
 public void OnPlayerSpawn(Event eEvent, const char[] szName, bool bDontBroadcast)
@@ -3033,7 +3017,7 @@ bool ShouldCTTeamSave()
 	return true;
 }
 
-bool IsCTCommittedToSave(int iClient)
+static bool IsCTCommittedToSaveCore(int iClient, bool bStrategicSave)
 {
 	if (!IsValidClient(iClient) || !IsPlayerAlive(iClient) || !IsFakeClient(iClient))
 		return false;
@@ -3044,7 +3028,7 @@ bool IsCTCommittedToSave(int iClient)
 	if (!g_bBombPlanted)
 		return false;
 
-	if (!ShouldCTStrategicSaveRuntime())
+	if (!bStrategicSave)
 		return false;
 
 	if (!!GetEntProp(iClient, Prop_Send, "m_bIsDefusing"))
@@ -3066,37 +3050,14 @@ bool IsCTCommittedToSave(int iClient)
 	return true;
 }
 
+bool IsCTCommittedToSave(int iClient)
+{
+	return IsCTCommittedToSaveCore(iClient, ShouldCTStrategicSaveRuntime());
+}
+
 bool IsCTCommittedToSaveSnapshot(int iClient)
 {
-	if (!IsValidClient(iClient) || !IsPlayerAlive(iClient) || !IsFakeClient(iClient))
-		return false;
-
-	if (GetClientTeam(iClient) != CS_TEAM_CT)
-		return false;
-
-	if (!g_bBombPlanted)
-		return false;
-
-	if (!IsCTStrategicSaveActive())
-		return false;
-
-	if (!!GetEntProp(iClient, Prop_Send, "m_bIsDefusing"))
-		return false;
-
-	if (IsSavingBotUnderDirectThreat(iClient))
-		return false;
-
-	float fBombDistance;
-	if (!GetDistanceToPlantedBomb(iClient, fBombDistance))
-		return false;
-
-	if (fBombDistance <= CT_SAVE_COMMIT_DEFUSE_CANCEL_DISTANCE)
-		return false;
-
-	if (fBombDistance < CT_SAVE_COMMIT_MIN_BOMB_DISTANCE)
-		return false;
-
-	return true;
+	return IsCTCommittedToSaveCore(iClient, IsCTStrategicSaveActive());
 }
 
 bool ShouldStartCTTeamSave()
@@ -4165,10 +4126,7 @@ bool IsPeekScriptLineupAllowed(int iClient, float fNow)
 	if (g_bTeamPeekUsedRound[iTeam] || g_bPeekAssigned[iClient] || g_bBombPlanted || g_iAliveCountT == 0 || g_iAliveCountCT == 0)
 		return false;
 
-	float fOpeningStart = g_fFreezeTimeEnd;
-	if (fOpeningStart <= 0.0)
-		fOpeningStart = g_fRoundStart;
-	if ((fNow - fOpeningStart) > SCRIPT_PEEK_OPENING_WINDOW)
+	if (GetScriptLiveTime(fNow) > SCRIPT_PEEK_OPENING_WINDOW)
 		return false;
 
 	if (GetEntData(iClient, g_iEnemyVisibleOffset) != 0 || GetEntityMoveType(iClient) == MOVETYPE_LADDER)
@@ -4265,7 +4223,7 @@ bool ShouldCancelScriptLineupAction(int iClient, ScriptAction iAction)
 		return true;
 
 	if (iAction == ScriptAction_Angle
-		&& (g_bRoundDecided || g_bBombPlanted || g_iAliveCountT < 3 || g_iAliveCountCT < 3 || GetScriptLiveTime(GetGameTime()) > SCRIPT_ANGLE_LIVE_CANCEL || IsCriticalScriptObjectiveTask(iTask) || !IsClientCurrentPrimarySniperScout(iClient)))
+		&& (g_bBombPlanted || g_iAliveCountT < 3 || g_iAliveCountCT < 3 || GetScriptLiveTime(GetGameTime()) > SCRIPT_ANGLE_LIVE_CANCEL || IsCriticalScriptObjectiveTask(iTask) || !IsClientCurrentPrimarySniperScout(iClient)))
 		return true;
 
 	if (iAction == ScriptAction_Nade && (g_bBombPlanted || !IsRegulationPistolRound()))
@@ -4286,17 +4244,22 @@ bool ThrottleScriptMove(int iClient, const float fTarget[3], float fNow)
 	return true;
 }
 
-bool IsScriptLineupMovementStale(int iClient, float fNow)
+static bool CheckMovementStale(int iClient, float fLastPos[3], float &fLastMoveTime, float fTimeout, float fNow)
 {
-	float fMoveDelta = GetVectorDistance(g_fBotOrigin[iClient], g_fScriptActionLastPos[iClient]);
+	float fMoveDelta = GetVectorDistance(g_fBotOrigin[iClient], fLastPos);
 	if (fMoveDelta > 8.0)
 	{
-		Array_Copy(g_fBotOrigin[iClient], g_fScriptActionLastPos[iClient], 3);
-		g_fScriptActionLastMoveTime[iClient] = fNow;
+		Array_Copy(g_fBotOrigin[iClient], fLastPos, 3);
+		fLastMoveTime = fNow;
 		return false;
 	}
 
-	return (fNow - g_fScriptActionLastMoveTime[iClient]) > 2.0;
+	return (fNow - fLastMoveTime) > fTimeout;
+}
+
+bool IsScriptLineupMovementStale(int iClient, float fNow)
+{
+	return CheckMovementStale(iClient, g_fScriptActionLastPos[iClient], g_fScriptActionLastMoveTime[iClient], 2.0, fNow);
 }
 
 stock int GetNearestEntity(int iClient, const char[] szClassname)
@@ -5182,15 +5145,7 @@ stock void StartClientLegacyDefaultNadeAction(int iClient, int iNade, float fNow
 
 stock bool IsLegacyDefaultNadeMovementStale(int iClient, float fNow)
 {
-	float fMoveDelta = GetVectorDistance(g_fBotOrigin[iClient], g_fLegacyDefaultNadeLastPos[iClient]);
-	if (fMoveDelta > 8.0)
-	{
-		Array_Copy(g_fBotOrigin[iClient], g_fLegacyDefaultNadeLastPos[iClient], 3);
-		g_fLegacyDefaultNadeLastMoveTime[iClient] = fNow;
-		return false;
-	}
-
-	return (fNow - g_fLegacyDefaultNadeLastMoveTime[iClient]) > LEGACY_DEFAULT_NADE_STUCK_TIMEOUT;
+	return CheckMovementStale(iClient, g_fLegacyDefaultNadeLastPos[iClient], g_fLegacyDefaultNadeLastMoveTime[iClient], LEGACY_DEFAULT_NADE_STUCK_TIMEOUT, fNow);
 }
 
 stock void FailClientLegacyDefaultNadeAction(int iClient, const char[] szReason, float fNow)
@@ -5203,12 +5158,7 @@ stock void FailClientLegacyDefaultNadeAction(int iClient, const char[] szReason,
 		sNade.fTimestamp = fNow;
 		g_aNades.SetArray(iNade, sNade);
 
-		if (StrEqual(szReason, "timed out"))
-			PrintToServer("Warning: legacy default nade client=%N replay=%s failed: timed out at pos=%.1f %.1f %.1f; retry after %.1f sec.", iClient, sNade.szReplay, sNade.fPos[0], sNade.fPos[1], sNade.fPos[2], LEGACY_DEFAULT_NADE_RETRY_COOLDOWN);
-		else if (StrEqual(szReason, "movement stale"))
-			PrintToServer("Warning: legacy default nade client=%N replay=%s failed: movement stale at pos=%.1f %.1f %.1f; retry after %.1f sec.", iClient, sNade.szReplay, sNade.fPos[0], sNade.fPos[1], sNade.fPos[2], LEGACY_DEFAULT_NADE_RETRY_COOLDOWN);
-		else
-			PrintToServer("Warning: legacy default nade client=%N replay=%s failed: %s at pos=%.1f %.1f %.1f; retry after %.1f sec.", iClient, sNade.szReplay, szReason, sNade.fPos[0], sNade.fPos[1], sNade.fPos[2], LEGACY_DEFAULT_NADE_RETRY_COOLDOWN);
+		PrintToServer("Warning: legacy default nade client=%N replay=%s failed: %s at pos=%.1f %.1f %.1f; retry after %.1f sec.", iClient, sNade.szReplay, szReason, sNade.fPos[0], sNade.fPos[1], sNade.fPos[2], LEGACY_DEFAULT_NADE_RETRY_COOLDOWN);
 	}
 	else
 	{
