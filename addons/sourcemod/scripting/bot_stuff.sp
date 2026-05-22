@@ -1102,6 +1102,7 @@ public void OnRoundStart(Event eEvent, const char[] szName, bool bDontBroadcast)
 	g_bTeamPeekRollPassed[CS_TEAM_CT] = false;
 	g_bCTSaveLocked = false;
 	g_fCTSaveConditionSince = 0.0;
+	UpdateAliveTeamCounts();
 
 	bool bIsScenario = g_bIsBombScenario || g_bIsHostageScenario;
 	int iTeam = g_bIsBombScenario ? CS_TEAM_CT : CS_TEAM_T;
@@ -1171,9 +1172,13 @@ public void OnRoundEnd(Event eEvent, const char[] szName, bool bDontBroadcast)
 		g_hDropWeaponsTimer = null;
 	}
 
+	g_bCTSaveLocked = false;
+	g_fCTSaveConditionSince = 0.0;
+
 	for (int i = 1; i <= MaxClients; i++)
 	{
 		g_bSaveLocked[i] = false;
+		g_fSaveConditionSince[i] = 0.0;
 		ResetClientSaveTarget(i);
 		ResetClientBombMove(i);
 
@@ -3269,11 +3274,19 @@ bool ProcessRetakeSaveBehavior(int iClient, int &iButtons)
 	g_bThrowGrenade[iClient] = false;
 	g_bNadeResolved[iClient] = false;
 
-	SetDisposition(iClient, SELF_DEFENSE);
+	SetDisposition(iClient, OPPORTUNITY_FIRE);
 	BotEquipBestWeapon(iClient, true);
 
 	if (g_bSaveSettled[iClient])
+	{
+		float fLookTarget[3];
+		if (GetLiveEnemyCenter(iClient, fLookTarget))
+		{
+			fLookTarget[2] += HalfHumanHeight;
+			BotSetLookAt(iClient, "Save hold watch", fLookTarget, PRIORITY_HIGH, 0.5, false, 20.0, true);
+		}
 		return bChanged;
+	}
 
 	if (IsSavingBotUnderDirectThreat(iClient))
 		return bChanged;
@@ -3486,7 +3499,7 @@ bool ProcessBombGuardClearBehavior(int iClient, int &iButtons)
 
 	TaskType eTask = GetTask(iClient);
 	float fDistanceToC4 = GetVectorDistance(g_fBotOrigin[iClient], fC4Pos);
-	bool bDefuseCommitted = (eTask == DEFUSE_BOMB || eTask == FIND_TICKING_BOMB || GetEntProp(iClient, Prop_Send, "m_bIsDefusing") != 0 || fDistanceToC4 <= BOMB_GUARD_CLEAR_RADIUS);
+	bool bDefuseCommitted = (eTask == DEFUSE_BOMB || GetEntProp(iClient, Prop_Send, "m_bIsDefusing") != 0 || fDistanceToC4 <= BOMB_GUARD_CLEAR_RADIUS);
 	if (!bDefuseCommitted)
 		return false;
 
@@ -3516,17 +3529,21 @@ void ClearBombGuardThreat(int iClient, int iThreat, const float fThreatPos[3])
 	if (!IsValidClient(iThreat) || !IsPlayerAlive(iThreat))
 		return;
 
-	SetDisposition(iClient, ENGAGE_AND_INVESTIGATE);
-	BotEquipBestWeapon(iClient, true);
-
 	float fLookPos[3];
 	Array_Copy(fThreatPos, fLookPos, 3);
 	fLookPos[2] += HalfHumanHeight;
-	BotSetLookAt(iClient, "Clear bomb guard", fLookPos, PRIORITY_HIGH, 0.5, false, 20.0, true);
 
 	float fEyePos[3];
 	GetClientEyePosition(iClient, fEyePos);
-	if (!IsPointVisible(fEyePos, fLookPos) && GetVectorDistance(g_fBotOrigin[iClient], fThreatPos) > 150.0)
+	bool bCanSee = IsPointVisible(fEyePos, fLookPos);
+
+	if (bCanSee)
+	{
+		SetDisposition(iClient, ENGAGE_AND_INVESTIGATE);
+		BotEquipBestWeapon(iClient, true);
+		BotSetLookAt(iClient, "Clear bomb guard", fLookPos, PRIORITY_HIGH, 0.5, false, 20.0, true);
+	}
+	else if (GetVectorDistance(g_fBotOrigin[iClient], fThreatPos) > 150.0)
 	{
 		float fMovePos[3];
 		Array_Copy(fThreatPos, fMovePos, 3);
