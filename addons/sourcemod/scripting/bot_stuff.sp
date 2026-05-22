@@ -1697,7 +1697,7 @@ public MRESReturn CCSBot_SetLookAt(int iClient, DHookParam hParams)
 		CreateTimer(5.0, Timer_EnableSwitch, GetClientUserId(iClient));
 		return strcmp(szDesc, "Plant bomb on floor") == 0 ? MRES_Supercede : MRES_Ignored;
 	}
-	else if (bSaveActive)
+	else if (bSaveActive && strcmp(szDesc, "Noise") != 0 && strcmp(szDesc, "Nearby enemy gunfire") != 0)
 	{
 		LogSaveLookAtDebug(iClient, szDesc, false);
 		return MRES_Ignored;
@@ -3239,15 +3239,7 @@ bool ProcessRetakeSaveBehavior(int iClient, int &iButtons)
 	BotEquipBestWeapon(iClient, true);
 
 	if (g_bSaveSettled[iClient])
-	{
-		float fLookTarget[3];
-		if (GetLiveEnemyCenter(iClient, fLookTarget))
-		{
-			fLookTarget[2] += HalfHumanHeight;
-			BotSetLookAt(iClient, "Save hold watch", fLookTarget, PRIORITY_HIGH, 0.5, false, 20.0, true);
-		}
 		return bChanged;
-	}
 
 	if (IsSavingBotUnderDirectThreat(iClient))
 		return bChanged;
