@@ -28,6 +28,11 @@
 #define RETAKE_SAVE_PROGRESS_THRESHOLD 64.0
 #define BOMB_MOVE_INTERVAL 0.5
 #define SCRIPT_MOVE_INTERVAL 0.35
+#define NADE_SOLVE_INTERVAL 0.5
+#define NADE_SOLVE_BUDGET_WINDOW 0.1
+#define NADE_SOLVE_MAX_PER_WINDOW 2
+#define NADE_SOLVE_CACHE_TTL 1.5
+#define NADE_SOLVE_CACHE_TARGET_TOLERANCE 96.0
 #define CT_SAVE_COMMIT_MIN_BOMB_DISTANCE 1200.0
 #define CT_SAVE_COMMIT_DEFUSE_CANCEL_DISTANCE 500.0
 
@@ -105,6 +110,12 @@ float g_fOriginalNoisePos[MAXPLAYERS+1][3];
 float g_fRoundStart, g_fFreezeTimeEnd;
 float g_fLookAngleMaxAccel[MAXPLAYERS+1], g_fReactionTime[MAXPLAYERS+1], g_fAggression[MAXPLAYERS+1], g_fShootTimestamp[MAXPLAYERS+1], g_fThrowNadeTimestamp[MAXPLAYERS+1], g_fCrouchTimestamp[MAXPLAYERS+1];
 float g_fSniperRetreatCooldown[MAXPLAYERS+1];
+float g_fNextNadeSolveAt[MAXPLAYERS+1];
+float g_fLastNadeSolveTarget[MAXPLAYERS+1][3], g_fLastNadeSolveLookAt[MAXPLAYERS+1][3], g_fLastNadeSolveTime[MAXPLAYERS+1];
+int g_iLastNadeSolveDefIndex[MAXPLAYERS+1];
+bool g_bLastNadeSolveValid[MAXPLAYERS+1], g_bLastNadeSolveSuccess[MAXPLAYERS+1];
+float g_fNadeSolveBudgetWindowStart;
+int g_iNadeSolvesThisWindow;
 float g_fBombPos[3];
 float g_fBombsitePositions[16][3];
 int g_iBombsiteCount;
@@ -734,6 +745,76 @@ void ResetClientBombMove(int iClient)
 	g_fBombMoveTarget[iClient][2] = 0.0;
 }
 
+void ResetClientNadeSolve(int iClient)
+{
+	if (iClient < 1 || iClient > MaxClients)
+		return;
+
+	g_fNextNadeSolveAt[iClient] = 0.0;
+	g_bLastNadeSolveValid[iClient] = false;
+	g_bLastNadeSolveSuccess[iClient] = false;
+	g_iLastNadeSolveDefIndex[iClient] = 0;
+	g_fLastNadeSolveTime[iClient] = 0.0;
+	g_fLastNadeSolveTarget[iClient][0] = 0.0;
+	g_fLastNadeSolveTarget[iClient][1] = 0.0;
+	g_fLastNadeSolveTarget[iClient][2] = 0.0;
+	g_fLastNadeSolveLookAt[iClient][0] = 0.0;
+	g_fLastNadeSolveLookAt[iClient][1] = 0.0;
+	g_fLastNadeSolveLookAt[iClient][2] = 0.0;
+}
+
+bool TryUseCachedNadeSolve(int iClient, const float fTarget[3], int iNadeDefIndex, float fLookAt[3], float fNow, bool &bSuccess)
+{
+	if (!g_bLastNadeSolveValid[iClient])
+		return false;
+
+	if (g_iLastNadeSolveDefIndex[iClient] != iNadeDefIndex)
+		return false;
+
+	if ((fNow - g_fLastNadeSolveTime[iClient]) > NADE_SOLVE_CACHE_TTL)
+		return false;
+
+	if (GetVectorDistance(g_fLastNadeSolveTarget[iClient], fTarget) > NADE_SOLVE_CACHE_TARGET_TOLERANCE)
+		return false;
+
+	bSuccess = g_bLastNadeSolveSuccess[iClient];
+	if (bSuccess)
+		Array_Copy(g_fLastNadeSolveLookAt[iClient], fLookAt, 3);
+	return true;
+}
+
+void StoreNadeSolveCache(int iClient, const float fTarget[3], int iNadeDefIndex, const float fLookAt[3], bool bSuccess, float fNow)
+{
+	g_bLastNadeSolveValid[iClient] = true;
+	g_bLastNadeSolveSuccess[iClient] = bSuccess;
+	g_iLastNadeSolveDefIndex[iClient] = iNadeDefIndex;
+	g_fLastNadeSolveTime[iClient] = fNow;
+	Array_Copy(fTarget, g_fLastNadeSolveTarget[iClient], 3);
+	if (bSuccess)
+		Array_Copy(fLookAt, g_fLastNadeSolveLookAt[iClient], 3);
+}
+
+bool ConsumeNadeSolveBudget(float fNow)
+{
+	if (g_fNadeSolveBudgetWindowStart <= 0.0 || (fNow - g_fNadeSolveBudgetWindowStart) >= NADE_SOLVE_BUDGET_WINDOW)
+	{
+		g_fNadeSolveBudgetWindowStart = fNow;
+		g_iNadeSolvesThisWindow = 0;
+	}
+
+	if (g_iNadeSolvesThisWindow >= NADE_SOLVE_MAX_PER_WINDOW)
+		return false;
+
+	g_iNadeSolvesThisWindow++;
+	return true;
+}
+
+void ResetNadeSolveBudget()
+{
+	g_fNadeSolveBudgetWindowStart = 0.0;
+	g_iNadeSolvesThisWindow = 0;
+}
+
 void BuyEcoPistolAndGear(int iClient, bool bDefaultPistol, int iTeam, bool bHasDefuser)
 {
 	if (bDefaultPistol)
@@ -1089,6 +1170,7 @@ public void OnRoundStart(Event eEvent, const char[] szName, bool bDontBroadcast)
 	g_bTeamPeekRollPassed[CS_TEAM_CT] = false;
 	g_bCTSaveLocked = false;
 	g_fCTSaveConditionSince = 0.0;
+	ResetNadeSolveBudget();
 	UpdateAliveTeamCounts();
 
 	bool bIsScenario = g_bIsBombScenario || g_bIsHostageScenario;
@@ -1105,6 +1187,7 @@ public void OnRoundStart(Event eEvent, const char[] szName, bool bDontBroadcast)
 		g_fSaveConditionSince[i] = 0.0;
 		ResetClientSaveTarget(i);
 		ResetClientBombMove(i);
+		ResetClientNadeSolve(i);
 		g_fSaveLookAtDebugTime[i] = 0.0;
 		g_bPeekAssigned[i] = false;
 		g_bAngleAssigned[i] = false;
@@ -1161,6 +1244,7 @@ public void OnRoundEnd(Event eEvent, const char[] szName, bool bDontBroadcast)
 
 	g_bCTSaveLocked = false;
 	g_fCTSaveConditionSince = 0.0;
+	ResetNadeSolveBudget();
 
 	for (int i = 1; i <= MaxClients; i++)
 	{
@@ -1168,6 +1252,7 @@ public void OnRoundEnd(Event eEvent, const char[] szName, bool bDontBroadcast)
 		g_fSaveConditionSince[i] = 0.0;
 		ResetClientSaveTarget(i);
 		ResetClientBombMove(i);
+		ResetClientNadeSolve(i);
 
 		if (IsValidClient(i) && IsFakeClient(i))
 			CancelClientActiveLineupActions(i, false);
@@ -1300,6 +1385,7 @@ public void OnPlayerDeath(Event eEvent, const char[] szName, bool bDontBroadcast
 		g_fAttackDebugTime[iClient] = 0.0;
 		ResetClientSaveTarget(iClient);
 		ResetClientBombMove(iClient);
+		ResetClientNadeSolve(iClient);
 
 		if (IsFakeClient(iClient))
 			CancelClientActiveLineupActions(iClient, false);
@@ -2219,6 +2305,7 @@ public void OnPlayerSpawn(Event eEvent, const char[] szName, bool bDontBroadcast
 	g_fSaveConditionSince[iClient] = 0.0;
 	ResetClientSaveTarget(iClient);
 	ResetClientBombMove(iClient);
+	ResetClientNadeSolve(iClient);
 	g_fSaveLookAtDebugTime[iClient] = 0.0;
 
     if (g_bIsProBot[iClient])
@@ -2292,6 +2379,7 @@ public void OnClientDisconnect(int iClient)
 	g_pCurrArea[iClient] = INVALID_NAV_AREA;
 	ResetClientSaveTarget(iClient);
 	ResetClientBombMove(iClient);
+	ResetClientNadeSolve(iClient);
 	g_szCrosshairCode[iClient][0] = '\0';
 }
 
@@ -4527,6 +4615,10 @@ stock bool TraceGroundHeight(const float fPos[3], float &fHeight)
 
 stock bool ProcessGrenadeThrow(int iClient, float fTarget[3], int iGrenadeEnt = -1)
 {
+	float fNow = GetGameTime();
+	if (fNow < g_fNextNadeSolveAt[iClient])
+		return false;
+
 	int iGrenadeSlot = iGrenadeEnt != -1 ? iGrenadeEnt : GetPlayerWeaponSlot(iClient, CS_SLOT_GRENADE);
 	if (!IsValidEntity(iGrenadeSlot))
 		return false;
@@ -4543,8 +4635,23 @@ stock bool ProcessGrenadeThrow(int iClient, float fTarget[3], int iGrenadeEnt = 
 		fGroundTarget[2] = fHeight;
 
 	float fLookAt[3];
-	if (!SolveGrenadeToss(iClient, fGroundTarget, fLookAt, iNadeDefIndex))
-		return false;
+	bool bCachedSuccess;
+	if (TryUseCachedNadeSolve(iClient, fGroundTarget, iNadeDefIndex, fLookAt, fNow, bCachedSuccess))
+	{
+		if (!bCachedSuccess)
+			return false;
+	}
+	else
+	{
+		if (!ConsumeNadeSolveBudget(fNow))
+			return false;
+
+		g_fNextNadeSolveAt[iClient] = fNow + NADE_SOLVE_INTERVAL;
+		bool bSolved = SolveGrenadeToss(iClient, fGroundTarget, fLookAt, iNadeDefIndex);
+		StoreNadeSolveCache(iClient, fGroundTarget, iNadeDefIndex, fLookAt, bSolved, fNow);
+		if (!bSolved)
+			return false;
+	}
 
 	Array_Copy(fLookAt, g_fNadeTarget[iClient], 3);
 	Array_Copy(fGroundTarget, g_fNadeSolveTarget[iClient], 3);
