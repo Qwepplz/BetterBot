@@ -217,18 +217,40 @@ bool CanUseRank(int client)
 	return g_RankPoints_Flag == -1 || CheckCommandAccess(client, "", g_RankPoints_Flag, true);
 }
 
+void WriteRanksToPlayerManager(int playerManager, bool changeState)
+{
+	static int rankOffset = -1;
+	if (rankOffset == -1)
+		rankOffset = FindSendPropInfo("CCSPlayerResource", "m_iCompetitiveRanking");
+
+	SetEntDataArray(playerManager, rankOffset, rank, MaxClients + 1, 4, changeState);
+}
+
+void MarkRanksChanged()
+{
+	int playerManager = FindEntityByClassname(MaxClients + 1, "cs_player_manager");
+	if (playerManager != -1)
+		WriteRanksToPlayerManager(playerManager, true);
+}
+
 void RevealAllRanksToClient(int client)
 {
-	Handle message = StartMessageOne("ServerRankRevealAll", client);
+	Handle message = StartMessageOne("ServerRankRevealAll", client, USERMSG_RELIABLE);
 	if (message != null)
 		EndMessage();
 }
 
 void RevealAllRanksToAll()
 {
-	Handle message = StartMessageAll("ServerRankRevealAll");
+	Handle message = StartMessageAll("ServerRankRevealAll", USERMSG_RELIABLE);
 	if (message != null)
 		EndMessage();
+}
+
+public Action Timer_RevealAllRanks(Handle timer)
+{
+	RevealAllRanksToAll();
+	return Plugin_Stop;
 }
 
 public void OnLibraryAdded(const char[] name)
@@ -316,10 +338,13 @@ public void _HLStatsX_API_Response(int command, int payload, int client, DataPac
 public Action Event_Disconnect(Event event, const char[] name, bool dontBroadcast)
 {
 	int client = GetClientOfUserId(event.GetInt("userid"));
-	
+
 	if (client)
+	{
 		rank[client] = 0;
-	
+		MarkRanksChanged();
+	}
+
 	return Plugin_Continue;
 }
 
@@ -327,14 +352,10 @@ public Action Event_RoundStart(Event event, const char[] name, bool dontBroadcas
 {
 	int playerManager = FindEntityByClassname(MaxClients + 1, "cs_player_manager");
 	if (playerManager != -1)
-	{
-		static int rankOffset = -1;
-		if (rankOffset == -1)
-			rankOffset = FindSendPropInfo("CCSPlayerResource", "m_iCompetitiveRanking");
-		
-		SetEntDataArray(playerManager, rankOffset, rank, MaxClients + 1);
-	}
-	
+		WriteRanksToPlayerManager(playerManager, true);
+
+	CreateTimer(0.2, Timer_RevealAllRanks, _, TIMER_FLAG_NO_MAPCHANGE);
+
 	return Plugin_Continue;
 }
 
@@ -370,14 +391,22 @@ public void CheckRanks(int client, int points)
 {
 	if (!CanUseRank(client))
 	{
-		rank[client] = 0;
+		if (rank[client] != 0)
+		{
+			rank[client] = 0;
+			MarkRanksChanged();
+		}
 		return;
 	}
-	
+
+	int previousRank = rank[client];
 	rank[client] = GetRankFromPoints(points);
+	if (rank[client] != previousRank)
+		MarkRanksChanged();
+
 	if (rank[client] > oldrank[client] && rank[client] > 0)
 		RankUpdate(client, oldrank[client], rank[client]);
-	
+
 	oldrank[client] = rank[client];
 }
 
@@ -402,11 +431,7 @@ public void RankUpdate(int client, int old_rank, int new_rank)
 
 public void Hook_OnThinkPost(int iEnt)
 {
-	static int rankOffset = -1;
-	if (rankOffset == -1)
-		rankOffset = FindSendPropInfo("CCSPlayerResource", "m_iCompetitiveRanking");
-
-	SetEntDataArray(iEnt, rankOffset, rank, MaxClients + 1);
+	WriteRanksToPlayerManager(iEnt, false);
 }
 
 public Action Menu_Points(int client, int args)
