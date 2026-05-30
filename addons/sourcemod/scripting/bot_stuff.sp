@@ -36,6 +36,22 @@
 #define CT_SAVE_COMMIT_MIN_BOMB_DISTANCE 1200.0
 #define CT_SAVE_COMMIT_DEFUSE_CANCEL_DISTANCE 500.0
 
+enum Get5State
+{
+	Get5State_None,
+	Get5State_PreVeto,
+	Get5State_Veto,
+	Get5State_Warmup,
+	Get5State_KnifeRound,
+	Get5State_WaitingForKnifeRoundDecision,
+	Get5State_GoingLive,
+	Get5State_Live,
+	Get5State_PendingRestore,
+	Get5State_PostGame,
+};
+
+native Get5State Get5_GetGameState();
+
 enum
 {
 	DEFIDX_DEAGLE = 1,
@@ -3003,6 +3019,9 @@ bool ShouldSaveInsteadOfRetake(int iClient)
 	if (!IsValidClient(iClient) || !IsPlayerAlive(iClient) || !IsFakeClient(iClient))
 		return false;
 
+	if (IsWarmupPeriod() || IsGet5SaveBlockedPhase())
+		return false;
+
 	int iTeam = GetClientTeam(iClient);
 
 	if (iTeam == CS_TEAM_CT)
@@ -3052,6 +3071,22 @@ bool ShouldSaveInsteadOfRetake(int iClient)
 bool IsForceSaveEnabled()
 {
 	return (g_cvForceSave != null && g_cvForceSave.BoolValue);
+}
+
+bool IsWarmupPeriod()
+{
+	return GameRules_GetProp("m_bWarmupPeriod") != 0;
+}
+
+bool IsGet5SaveBlockedPhase()
+{
+	if (GetFeatureStatus(FeatureType_Native, "Get5_GetGameState") != FeatureStatus_Available)
+		return false;
+
+	Get5State state = Get5_GetGameState();
+	return state == Get5State_Warmup
+		|| state == Get5State_KnifeRound
+		|| state == Get5State_WaitingForKnifeRoundDecision;
 }
 
 bool ShouldCTStrategicSaveRuntime()
