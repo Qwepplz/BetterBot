@@ -220,6 +220,8 @@ float g_fAttackDebugTime[MAXPLAYERS+1];
 #define SCRIPT_ANGLE_LIVE_CANCEL 60.0
 #define SCRIPT_ANGLE_ACTION_TIMEOUT 25.0
 #define SCRIPT_ANGLE_TEAM_ACTIVE_CAP 2
+#define STRATEGY_START_DISTANCE 45.0
+#define STRATEGY_START_SPEED 20.0
 
 enum struct NadeLineup
 {
@@ -245,11 +247,40 @@ enum struct ScriptLineup
 	int iTeam;
 }
 
+enum struct StrategyConfig
+{
+	float fChance;
+	int iMinPlayers;
+	float fTimeout;
+	int iRoleStart;
+	int iRoleCount;
+}
+
+enum struct StrategyRole
+{
+	float fPos[3];
+	float fLook[3];
+	char szReplay[128];
+	int iUtility1DefIndex;
+	int iUtility1Amount;
+	int iUtility2DefIndex;
+	int iUtility2Amount;
+	int iClient;
+}
+
 ArrayList g_aNades;
 ArrayList g_aPistolNades;
 ArrayList g_aPostPlantNades;
 ArrayList g_aPeeks;
 ArrayList g_aAngles;
+ArrayList g_aStrategies;
+ArrayList g_aStrategyRoles;
+bool g_bStrategyStarted;
+int g_iActiveStrategy = -1;
+int g_iStrategyConfigMode = -1;
+float g_fStrategyAssignTime;
+int g_iClientStrategyRole[MAXPLAYERS + 1] = {-1, ...};
+char g_szStrategyConfigMap[PLATFORM_MAX_PATH];
 
 static const char g_szTopBotNames[][] =
 {
@@ -1171,6 +1202,7 @@ public void OnRoundPreStart(Event eEvent, const char[] szName, bool bDontBroadca
 
 public void OnRoundStart(Event eEvent, const char[] szName, bool bDontBroadcast)
 {
+	ClearActiveStrategy(true);
 	ResetScriptLineupRuntimeState();
 
 	g_bFreezetimeEnd = false;
@@ -1187,6 +1219,7 @@ public void OnRoundStart(Event eEvent, const char[] szName, bool bDontBroadcast)
 	g_bCTSaveLocked = false;
 	g_fCTSaveConditionSince = 0.0;
 	ResetNadeSolveBudget();
+	ParseRoundStrategies();
 	UpdateAliveTeamCounts();
 
 	bool bIsScenario = g_bIsBombScenario || g_bIsHostageScenario;
@@ -1251,6 +1284,7 @@ public void OnRoundStart(Event eEvent, const char[] szName, bool bDontBroadcast)
 public void OnRoundEnd(Event eEvent, const char[] szName, bool bDontBroadcast)
 {
 	g_bRoundDecided = true;
+	ClearActiveStrategy(true);
 
 	if (g_hDropWeaponsTimer != null)
 	{
@@ -1295,11 +1329,15 @@ public void OnFreezetimeEnd(Event eEvent, const char[] szName, bool bDontBroadca
 	g_bFreezetimeEnd = true;
 	g_fFreezeTimeEnd = GetGameTime();
 	UpdateAliveTeamCounts();
+
+	if (g_aStrategies != null && g_aStrategies.Length > 0)
+		TrySelectStrategy();
 }
 
 public void OnBombPlanted(Event eEvent, const char[] szName, bool bDontBroadcast)
 {
 	g_bBombPlanted = true;
+	ClearActiveStrategy(true);
 
 	int iPlantedC4 = FindEntityByClassname(-1, "planted_c4");
 	if (IsValidEntity(iPlantedC4))
@@ -1404,7 +1442,11 @@ public void OnPlayerDeath(Event eEvent, const char[] szName, bool bDontBroadcast
 		ResetClientNadeSolve(iClient);
 
 		if (IsFakeClient(iClient))
+		{
 			CancelClientActiveLineupActions(iClient, false);
+			if (g_iClientStrategyRole[iClient] != -1)
+				ClearActiveStrategy(true);
+		}
 	}
 
 	UpdateAliveTeamCounts();
@@ -1993,6 +2035,9 @@ public Action OnPlayerRunCmd(int iClient, int &iButtons, int &iImpulse, float fV
 		LogRetakeSaveDebug(iClient);
 	}
 
+	if (HandleStrategyBot(iClient, !!GetEntData(iClient, g_iEnemyVisibleOffset)))
+		return Plugin_Continue;
+
 	int iPrimary = GetPlayerWeaponSlot(iClient, CS_SLOT_PRIMARY);
 	if (IsValidEntity(iPrimary) && fNow >= g_fSniperRetreatCooldown[iClient])
 	{
@@ -2570,6 +2615,130 @@ void ParseScriptLineups(const char[] szConfig, const char[] szRoot, const char[]
 	while (hKv.GotoNextKey());
 
 	delete hKv;
+}
+
+void ParseRoundStrategies()
+{
+	char szMap[PLATFORM_MAX_PATH];
+	GetCurrentMap(szMap, sizeof(szMap));
+	GetMapDisplayName(szMap, szMap, sizeof(szMap));
+
+	int iMode = IsRegulationPistolRound() ? 1 : 0;
+	if (g_iStrategyConfigMode == iMode && strcmp(g_szStrategyConfigMap, szMap, false) == 0 && g_aStrategies != null && g_aStrategyRoles != null)
+		return;
+
+	delete g_aStrategies;
+	delete g_aStrategyRoles;
+	g_aStrategies = new ArrayList(sizeof(StrategyConfig));
+	g_aStrategyRoles = new ArrayList(sizeof(StrategyRole));
+	g_iStrategyConfigMode = iMode;
+	strcopy(g_szStrategyConfigMap, sizeof(g_szStrategyConfigMap), szMap);
+
+	if (iMode == 1)
+		ParseMapStrategies("configs/bot_strategies_pistol.txt", "pistolstrats", szMap);
+	else
+		ParseMapStrategies("configs/bot_strategies.txt", "Strategies", szMap);
+}
+
+void ParseMapStrategies(const char[] szConfig, const char[] szRoot, const char[] szMap)
+{
+	char szPath[PLATFORM_MAX_PATH];
+	BuildPath(Path_SM, szPath, sizeof(szPath), szConfig);
+
+	if (!FileExists(szPath))
+		return;
+
+	KeyValues hKv = new KeyValues(szRoot);
+	if (!hKv.ImportFromFile(szPath) || !hKv.JumpToKey(szMap) || !hKv.GotoFirstSubKey())
+	{
+		delete hKv;
+		return;
+	}
+
+	do
+	{
+		StrategyConfig sStrategy;
+		char szStrategyName[64];
+		char szTeam[16];
+
+		hKv.GetSectionName(szStrategyName, sizeof(szStrategyName));
+		hKv.GetString("team", szTeam, sizeof(szTeam), "T");
+		if (strcmp(szTeam, "T", false) != 0)
+			continue;
+
+		sStrategy.fChance = hKv.GetFloat("chance", 0.0);
+		sStrategy.iMinPlayers = hKv.GetNum("minplayers", 1);
+		sStrategy.fTimeout = hKv.GetFloat("timeout", 12.0);
+		sStrategy.iRoleStart = g_aStrategyRoles.Length;
+		sStrategy.iRoleCount = 0;
+
+		if (hKv.GotoFirstSubKey())
+		{
+			do
+			{
+				StrategyRole sRole;
+				char szRoleName[64];
+				char szEntry[160];
+
+				hKv.GetSectionName(szRoleName, sizeof(szRoleName));
+				Format(szEntry, sizeof(szEntry), "%s/%s", szStrategyName, szRoleName);
+
+				if (!ReadScriptVectorField(hKv, szConfig, szMap, szEntry, "position", sRole.fPos))
+					continue;
+
+				if (!ReadScriptVectorField(hKv, szConfig, szMap, szEntry, "lookat", sRole.fLook))
+					continue;
+
+				hKv.GetString("replay", sRole.szReplay, sizeof(sRole.szReplay));
+				if (sRole.szReplay[0] == '\0' || !ScriptReplayExists(sRole.szReplay))
+					continue;
+
+				ReadStrategyUtility(hKv, "utility1", sRole.iUtility1DefIndex, sRole.iUtility1Amount);
+				ReadStrategyUtility(hKv, "utility2", sRole.iUtility2DefIndex, sRole.iUtility2Amount);
+				sRole.iClient = 0;
+
+				g_aStrategyRoles.PushArray(sRole);
+				sStrategy.iRoleCount++;
+			}
+			while (hKv.GotoNextKey());
+
+			hKv.GoBack();
+		}
+
+		if (sStrategy.iRoleCount > 0)
+			g_aStrategies.PushArray(sStrategy);
+	}
+	while (hKv.GotoNextKey());
+
+	delete hKv;
+}
+
+void ReadStrategyUtility(KeyValues hKv, const char[] szKey, int &iDefIndex, int &iAmount)
+{
+	char szValue[32];
+	iDefIndex = 0;
+	iAmount = 0;
+	hKv.GetString(szKey, szValue, sizeof(szValue), "");
+
+	if (szValue[0] == '\0')
+		return;
+
+	char szParts[2][16];
+	int iParts = ExplodeString(szValue, " ", szParts, sizeof(szParts), sizeof(szParts[]));
+	if (iParts < 1)
+		return;
+
+	iDefIndex = StringToInt(szParts[0]);
+	iAmount = (iParts >= 2) ? StringToInt(szParts[1]) : 1;
+	if (iDefIndex <= 0)
+	{
+		iDefIndex = 0;
+		iAmount = 0;
+	}
+	else if (iAmount <= 0)
+	{
+		iAmount = 1;
+	}
 }
 
 bool ReadScriptVectorField(KeyValues hKv, const char[] szConfig, const char[] szMap, const char[] szEntry, const char[] szField, float fVector[3])
@@ -4084,6 +4253,277 @@ bool TryAssignScriptLineup(int iClient, ArrayList aLineups, ScriptAction iAction
 	return true;
 }
 
+void TrySelectStrategy()
+{
+	if (g_iActiveStrategy != -1 || g_aStrategies == null || g_aStrategies.Length == 0 || IsWarmupPeriod() || !g_bFreezetimeEnd || g_bBombPlanted || g_bRoundDecided)
+		return;
+
+	for (int i = 0; i < g_aStrategies.Length; i++)
+	{
+		StrategyConfig sStrategy;
+		g_aStrategies.GetArray(i, sStrategy);
+
+		if (!IsItMyChance(sStrategy.fChance))
+			continue;
+
+		if (!TryAssignStrategy(i))
+			continue;
+
+		g_bStrategyStarted = false;
+		g_iActiveStrategy = i;
+		g_fStrategyAssignTime = GetGameTime();
+		return;
+	}
+}
+
+bool TryAssignStrategy(int iStrategy)
+{
+	StrategyConfig sStrategy;
+	g_aStrategies.GetArray(iStrategy, sStrategy);
+
+	int iSkipRole = GetStrategySkipRole(sStrategy);
+	if (iSkipRole == -2)
+		return false;
+
+	bool bUsed[MAXPLAYERS + 1];
+	for (int i = 1; i <= MaxClients; i++)
+		bUsed[i] = false;
+
+	for (int iPass = 0; iPass < 2; iPass++)
+	{
+		for (int iRole = 0; iRole < sStrategy.iRoleCount; iRole++)
+		{
+			int iRoleIndex = sStrategy.iRoleStart + iRole;
+			StrategyRole sRole;
+			g_aStrategyRoles.GetArray(iRoleIndex, sRole);
+
+			bool bHasUtility = StrategyRoleHasUtility(sRole);
+			if ((iPass == 0 && !bHasUtility) || (iPass == 1 && bHasUtility))
+				continue;
+
+			if (iRole == iSkipRole)
+			{
+				sRole.iClient = -1;
+				g_aStrategyRoles.SetArray(iRoleIndex, sRole);
+				continue;
+			}
+
+			int iClient = FindBotForStrategyRole(CS_TEAM_T, sRole, bUsed);
+			if (iClient == 0)
+			{
+				ClearActiveStrategy(false);
+				return false;
+			}
+
+			bUsed[iClient] = true;
+			sRole.iClient = iClient;
+			g_aStrategyRoles.SetArray(iRoleIndex, sRole);
+			g_iClientStrategyRole[iClient] = iRoleIndex;
+			CancelClientActiveLineupActions(iClient, false);
+		}
+	}
+
+	return true;
+}
+
+int GetStrategySkipRole(StrategyConfig sStrategy)
+{
+	int iFakeCount = GetAliveTeamCount(CS_TEAM_T, true);
+	int iHumanCount = GetAliveTeamCount(CS_TEAM_T, false);
+
+	if ((iFakeCount + iHumanCount) < sStrategy.iMinPlayers)
+		return -2;
+
+	if (iFakeCount >= sStrategy.iRoleCount)
+		return -1;
+
+	if (iHumanCount <= 0 || iFakeCount < sStrategy.iRoleCount - 1)
+		return -2;
+
+	for (int iRole = 0; iRole < sStrategy.iRoleCount; iRole++)
+	{
+		StrategyRole sRole;
+		g_aStrategyRoles.GetArray(sStrategy.iRoleStart + iRole, sRole);
+		if (!StrategyRoleHasUtility(sRole))
+			return iRole;
+	}
+
+	return -2;
+}
+
+int FindBotForStrategyRole(int iTeam, StrategyRole sRole, bool bUsed[MAXPLAYERS + 1])
+{
+	int iBestClient = 0;
+	float fBestDistance = -1.0;
+
+	for (int i = 1; i <= MaxClients; i++)
+	{
+		if (bUsed[i] || !IsValidClient(i) || !IsFakeClient(i) || !IsPlayerAlive(i) || GetClientTeam(i) != iTeam)
+			continue;
+
+		if (!IsClientScriptIdle(i) || GetEntityMoveType(i) == MOVETYPE_LADDER || !ClientMeetsStrategyUtility(i, sRole))
+			continue;
+
+		float fOrigin[3];
+		GetClientAbsOrigin(i, fOrigin);
+		float fDistance = GetVectorDistance(fOrigin, sRole.fPos);
+		if (fDistance < fBestDistance || fBestDistance < 0.0)
+		{
+			iBestClient = i;
+			fBestDistance = fDistance;
+		}
+	}
+
+	return iBestClient;
+}
+
+bool HandleStrategyBot(int iClient, bool bEnemyVisible)
+{
+	int iRoleIndex = g_iClientStrategyRole[iClient];
+	if (iRoleIndex < 0 || g_aStrategyRoles == null || iRoleIndex >= g_aStrategyRoles.Length || g_iActiveStrategy < 0)
+		return false;
+
+	StrategyConfig sStrategy;
+	StrategyRole sRole;
+	g_aStrategies.GetArray(g_iActiveStrategy, sStrategy);
+	g_aStrategyRoles.GetArray(iRoleIndex, sRole);
+
+	if (g_bBombPlanted || g_bRoundDecided || !IsPlayerAlive(iClient) || GetClientTeam(iClient) != CS_TEAM_T)
+	{
+		ClearActiveStrategy(g_bStrategyStarted);
+		return false;
+	}
+
+	if (g_bStrategyStarted)
+	{
+		if (bEnemyVisible && BotMimic_IsPlayerMimicing(iClient))
+		{
+			BotMimic_StopPlayerMimic(iClient);
+			BotEquipBestWeapon(iClient, true);
+			sRole.iClient = 0;
+			g_aStrategyRoles.SetArray(iRoleIndex, sRole);
+			g_iClientStrategyRole[iClient] = -1;
+			CheckActiveStrategyFinished();
+			return false;
+		}
+
+		CheckActiveStrategyFinished();
+		return g_iClientStrategyRole[iClient] != -1;
+	}
+
+	float fNow = GetGameTime();
+	if ((fNow - g_fStrategyAssignTime) > sStrategy.fTimeout || !ClientMeetsStrategyUtility(iClient, sRole))
+	{
+		ClearActiveStrategy(false);
+		return false;
+	}
+
+	if (ThrottleScriptMove(iClient, sRole.fPos, fNow))
+	{
+		SwitchWeapon(iClient, GetPlayerWeaponSlot(iClient, CS_SLOT_KNIFE));
+		BotMoveTo(iClient, sRole.fPos, FASTEST_ROUTE);
+	}
+
+	if (GetVectorDistance(g_fBotOrigin[iClient], sRole.fPos) < STRATEGY_START_DISTANCE)
+		BotSetLookAt(iClient, "Strategy start", sRole.fLook, PRIORITY_UNINTERRUPTABLE, 0.5, false, 5.0, false);
+
+	TryStartActiveStrategy();
+	return true;
+}
+
+void TryStartActiveStrategy()
+{
+	if (g_bStrategyStarted || g_iActiveStrategy < 0)
+		return;
+
+	StrategyConfig sStrategy;
+	g_aStrategies.GetArray(g_iActiveStrategy, sStrategy);
+
+	for (int iRole = 0; iRole < sStrategy.iRoleCount; iRole++)
+	{
+		StrategyRole sRole;
+		g_aStrategyRoles.GetArray(sStrategy.iRoleStart + iRole, sRole);
+		if (sRole.iClient == -1)
+			continue;
+
+		if (!IsValidClient(sRole.iClient) || !IsFakeClient(sRole.iClient) || !IsPlayerAlive(sRole.iClient))
+			return;
+
+		float fVelocity[3];
+		GetEntPropVector(sRole.iClient, Prop_Data, "m_vecAbsVelocity", fVelocity);
+		fVelocity[2] = 0.0;
+
+		if (GetVectorDistance(g_fBotOrigin[sRole.iClient], sRole.fPos) > STRATEGY_START_DISTANCE || GetVectorLength(fVelocity) > STRATEGY_START_SPEED || !(GetEntityFlags(sRole.iClient) & FL_ONGROUND))
+			return;
+	}
+
+	for (int iRole = 0; iRole < sStrategy.iRoleCount; iRole++)
+	{
+		StrategyRole sRole;
+		g_aStrategyRoles.GetArray(sStrategy.iRoleStart + iRole, sRole);
+		if (sRole.iClient == -1)
+			continue;
+
+		BMError iError = BotMimic_PlayRecordFromFile(sRole.iClient, sRole.szReplay);
+		if (iError != BM_NoError)
+		{
+			ClearActiveStrategy(true);
+			return;
+		}
+	}
+
+	g_bStrategyStarted = true;
+}
+
+void CheckActiveStrategyFinished()
+{
+	if (!g_bStrategyStarted || g_iActiveStrategy < 0)
+		return;
+
+	StrategyConfig sStrategy;
+	g_aStrategies.GetArray(g_iActiveStrategy, sStrategy);
+
+	for (int iRole = 0; iRole < sStrategy.iRoleCount; iRole++)
+	{
+		StrategyRole sRole;
+		g_aStrategyRoles.GetArray(sStrategy.iRoleStart + iRole, sRole);
+		if (sRole.iClient != -1 && IsValidClient(sRole.iClient) && IsFakeClient(sRole.iClient) && IsPlayerAlive(sRole.iClient) && BotMimic_IsPlayerMimicing(sRole.iClient))
+			return;
+	}
+
+	ClearActiveStrategy(false);
+}
+
+void ClearActiveStrategy(bool bStopMimic)
+{
+	if (bStopMimic)
+	{
+		for (int i = 1; i <= MaxClients; i++)
+		{
+			if (g_iClientStrategyRole[i] != -1 && IsValidClient(i) && IsFakeClient(i) && BotMimic_IsPlayerMimicing(i))
+				BotMimic_StopPlayerMimic(i);
+		}
+	}
+
+	g_bStrategyStarted = false;
+	g_iActiveStrategy = -1;
+	g_fStrategyAssignTime = 0.0;
+
+	if (g_aStrategyRoles != null)
+	{
+		for (int i = 0; i < g_aStrategyRoles.Length; i++)
+		{
+			StrategyRole sRole;
+			g_aStrategyRoles.GetArray(i, sRole);
+			sRole.iClient = 0;
+			g_aStrategyRoles.SetArray(i, sRole);
+		}
+	}
+
+	for (int i = 1; i <= MaxClients; i++)
+		g_iClientStrategyRole[i] = -1;
+}
+
 bool ProcessScriptLineupAction(int iClient, ScriptAction iAction, ArrayList aLineups, float fSpeed, float fNow)
 {
 	if (g_iScriptAction[iClient] != iAction)
@@ -5208,6 +5648,72 @@ stock bool IsRegulationPistolRound()
 	return (g_iCurrentRound == 0 || (iMaxRounds > 0 && g_iCurrentRound == iMaxRounds / 2));
 }
 
+bool StrategyRoleHasUtility(StrategyRole sRole)
+{
+	return sRole.iUtility1DefIndex > 0 || sRole.iUtility2DefIndex > 0;
+}
+
+bool ClientMeetsStrategyUtility(int iClient, StrategyRole sRole)
+{
+	if (sRole.iUtility1DefIndex > 0 && CountPlayerWeaponsByDefIndex(iClient, sRole.iUtility1DefIndex) < sRole.iUtility1Amount)
+		return false;
+
+	if (sRole.iUtility2DefIndex > 0 && CountPlayerWeaponsByDefIndex(iClient, sRole.iUtility2DefIndex) < sRole.iUtility2Amount)
+		return false;
+
+	return true;
+}
+
+int CountPlayerWeaponsByDefIndex(int iClient, int iDefIndex)
+{
+	static int iWeaponsOffset = -2;
+	if (iWeaponsOffset == -2)
+		iWeaponsOffset = FindDataMapInfo(iClient, "m_hMyWeapons");
+
+	int iCount = 0;
+
+	if (iWeaponsOffset == -1)
+		return IsValidEntity(eItems_FindWeaponByDefIndex(iClient, iDefIndex)) ? 1 : 0;
+
+	for (int i = 0; i < 64; i++)
+	{
+		int iWeapon = GetEntDataEnt2(iClient, iWeaponsOffset + (i * 4));
+		if (!IsValidEntity(iWeapon) || GetEntProp(iWeapon, Prop_Send, "m_iItemDefinitionIndex") != iDefIndex)
+			continue;
+
+		iCount++;
+
+		if (HasEntProp(iWeapon, Prop_Send, "m_iPrimaryReserveAmmoCount"))
+		{
+			int iReserve = GetEntProp(iWeapon, Prop_Send, "m_iPrimaryReserveAmmoCount");
+			if (iReserve > iCount)
+				iCount = iReserve;
+		}
+
+		if (HasEntProp(iWeapon, Prop_Data, "m_iPrimaryAmmoCount"))
+		{
+			int iAmmo = GetEntProp(iWeapon, Prop_Data, "m_iPrimaryAmmoCount");
+			if (iAmmo > iCount)
+				iCount = iAmmo;
+		}
+	}
+
+	return iCount;
+}
+
+int GetAliveTeamCount(int iTeam, bool bFake)
+{
+	int iCount = 0;
+
+	for (int i = 1; i <= MaxClients; i++)
+	{
+		if (IsValidClient(i) && IsPlayerAlive(i) && GetClientTeam(i) == iTeam && IsFakeClient(i) == bFake)
+			iCount++;
+	}
+
+	return iCount;
+}
+
 stock bool IsItMyChance(float fChance)
 {
     return (fChance > 0.0) && (Math_GetRandomFloat(0.0, 100.0) <= fChance);
@@ -5215,7 +5721,7 @@ stock bool IsItMyChance(float fChance)
 
 stock bool IsClientScriptIdle(int iClient)
 {
-	return (g_iScriptAction[iClient] == ScriptAction_None && g_iDoingSmokeNum[iClient] == -1 && !BotMimic_IsPlayerMimicing(iClient) && !g_bThrowGrenade[iClient]);
+	return (g_iScriptAction[iClient] == ScriptAction_None && g_iDoingSmokeNum[iClient] == -1 && !BotMimic_IsPlayerMimicing(iClient) && !g_bThrowGrenade[iClient] && g_iClientStrategyRole[iClient] == -1);
 }
 
 stock void ReleaseClientScriptLineupClaim(int iClient)
