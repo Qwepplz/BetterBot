@@ -101,6 +101,7 @@ static const int g_iDenialNades[] = {DEFIDX_MOLOTOV, DEFIDX_INCENDIARY, DEFIDX_H
 
 char g_szCrosshairCode[MAXPLAYERS+1][35], g_szPreviousBuy[MAXPLAYERS+1][128];
 bool g_bIsBombScenario, g_bIsHostageScenario, g_bFreezetimeEnd, g_bBombPlanted, g_bRoundDecided, g_bHalftimeSwitch, g_bIsCompetitive;
+int g_iLooseBombDropper = -1;
 bool g_bForceT, g_bForceCT;
 bool g_bUseCZ75[MAXPLAYERS+1], g_bUseUSP[MAXPLAYERS+1], g_bUseM4A1S[MAXPLAYERS+1], g_bDontSwitch[MAXPLAYERS+1], g_bDropWeapon[MAXPLAYERS+1], g_bHasGottenDrop[MAXPLAYERS+1], g_bCheapDrop[MAXPLAYERS+1], g_bBuyingCheapDrop[MAXPLAYERS+1];
 bool g_bIsProBot[MAXPLAYERS+1], g_bThrowGrenade[MAXPLAYERS+1], g_bUncrouch[MAXPLAYERS+1], g_bSaveLocked[MAXPLAYERS+1], g_bIssuingSaveMove[MAXPLAYERS+1];
@@ -431,6 +432,8 @@ public void OnPluginStart()
     HookEventEx("weapon_fire", OnWeaponFire);
 
     HookEventEx("bomb_planted", OnBombPlanted);
+    HookEventEx("bomb_dropped", OnBombDropped);
+    HookEventEx("bomb_pickup", OnBombPickup);
     HookEventEx("bomb_defused", OnBombDefused);
     HookEventEx("bomb_exploded", OnBombExploded);
     HookEventEx("bomb_beginplant", OnBombBeginPlant);
@@ -1218,6 +1221,7 @@ public void OnRoundStart(Event eEvent, const char[] szName, bool bDontBroadcast)
 	g_bTeamPeekRollPassed[CS_TEAM_CT] = false;
 	g_bCTSaveLocked = false;
 	g_fCTSaveConditionSince = 0.0;
+	g_iLooseBombDropper = -1;
 	ResetNadeSolveBudget();
 	ParseRoundStrategies();
 	UpdateAliveTeamCounts();
@@ -1354,6 +1358,16 @@ public void OnBombPlanted(Event eEvent, const char[] szName, bool bDontBroadcast
 public void OnBombDefused(Event eEvent, const char[] szName, bool bDontBroadcast)
 {
 	OnBombResolved();
+}
+
+public void OnBombDropped(Event eEvent, const char[] szName, bool bDontBroadcast)
+{
+	g_iLooseBombDropper = GetClientOfUserId(eEvent.GetInt("userid"));
+}
+
+public void OnBombPickup(Event eEvent, const char[] szName, bool bDontBroadcast)
+{
+	g_iLooseBombDropper = -1;
 }
 
 public void OnBombExploded(Event eEvent, const char[] szName, bool bDontBroadcast)
@@ -1755,6 +1769,9 @@ public MRESReturn CCSBot_CanSeeLooseBomb(int iClient, DHookReturn hReturn)
 			int iLooseC4 = FindLooseBomb();
 			if (iLooseC4 != -1)
 			{
+				if (IsLooseBombDroppedByLiveT())
+					return MRES_Ignored;
+
 				if (GetTask(iClient) != GUARD_LOOSE_BOMB && GetEntData(iClient, g_iBotNearbyEnemiesOffset) == 0)
 				{
 					float fC4Pos[3];
@@ -3181,6 +3198,12 @@ int FindLooseBomb()
 			return iEnt;
 	}
 	return -1;
+}
+
+bool IsLooseBombDroppedByLiveT()
+{
+	int iDropper = g_iLooseBombDropper;
+	return (IsValidClient(iDropper) && IsPlayerAlive(iDropper) && GetClientTeam(iDropper) == CS_TEAM_T);
 }
 
 bool ShouldSaveInsteadOfRetake(int iClient)
