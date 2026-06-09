@@ -2000,6 +2000,17 @@ public Action OnPlayerRunCmd(int iClient, int &iButtons, int &iImpulse, float fV
 	}
 
 	GetClientAbsOrigin(iClient, g_fBotOrigin[iClient]);
+
+	if (IsBotMimicBlockedPhase())
+	{
+		if (BotMimic_IsPlayerMimicing(iClient))
+			BotMimic_StopPlayerMimic(iClient);
+		if (g_iScriptAction[iClient] != ScriptAction_None)
+			CancelClientScriptAction(iClient, false);
+		g_iDoingSmokeNum[iClient] = -1;
+		ResetClientLegacyDefaultNadeTracking(iClient);
+	}
+
 	g_iActiveWeapon[iClient] = GetEntPropEnt(iClient, Prop_Send, "m_hActiveWeapon");
 	if (!IsValidEntity(g_iActiveWeapon[iClient]))
 		return Plugin_Continue;
@@ -2084,7 +2095,7 @@ public Action OnPlayerRunCmd(int iClient, int &iButtons, int &iImpulse, float fV
 		ResetClientLegacyDefaultNadeTracking(iClient);
 	}
 
-	if (!bShouldSaveInsteadOfRetake && g_iDoingSmokeNum[iClient] == -1 && fNow >= g_fNadeLineupCooldown[iClient])
+	if (!bShouldSaveInsteadOfRetake && g_iDoingSmokeNum[iClient] == -1 && fNow >= g_fNadeLineupCooldown[iClient] && !IsBotMimicBlockedPhase())
 	{
 		bool bAssignedScriptLineup = false;
 		if (IsClientScriptIdle(iClient))
@@ -3281,6 +3292,11 @@ bool IsGet5SaveBlockedPhase()
 		|| state == Get5State_WaitingForKnifeRoundDecision;
 }
 
+bool IsBotMimicBlockedPhase()
+{
+	return IsWarmupPeriod() || IsGet5SaveBlockedPhase();
+}
+
 bool ShouldCTStrategicSaveRuntime()
 {
 	if (IsForceSaveEnabled())
@@ -4278,7 +4294,7 @@ bool TryAssignScriptLineup(int iClient, ArrayList aLineups, ScriptAction iAction
 
 void TrySelectStrategy()
 {
-	if (g_iActiveStrategy != -1 || g_aStrategies == null || g_aStrategies.Length == 0 || IsWarmupPeriod() || !g_bFreezetimeEnd || g_bBombPlanted || g_bRoundDecided)
+	if (g_iActiveStrategy != -1 || g_aStrategies == null || g_aStrategies.Length == 0 || IsBotMimicBlockedPhase() || !g_bFreezetimeEnd || g_bBombPlanted || g_bRoundDecided)
 		return;
 
 	for (int i = 0; i < g_aStrategies.Length; i++)
