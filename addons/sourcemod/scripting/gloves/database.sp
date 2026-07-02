@@ -46,6 +46,10 @@ public void T_GetPlayerDataCallback(Database database, DBResultSet results, cons
 			FormatEx(query, sizeof(query), "INSERT INTO %sgloves (steamid) VALUES ('%s')", g_TablePrefix, steamid);
 			db.Query(T_InsertCallback, query);
 		}
+		g_iGroup[client][CS_TEAM_T] = -1;
+		g_iGloves[client][CS_TEAM_T] = -1;
+		g_iGroup[client][CS_TEAM_CT] = -1;
+		g_iGloves[client][CS_TEAM_CT] = -1;
 		return;
 	}
 

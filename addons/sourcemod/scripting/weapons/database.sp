@@ -118,9 +118,13 @@ public void T_GetPlayerDataCallback(Database database, DBResultSet results, cons
         for (int weaponIndex = 0; weaponIndex < sizeof(g_WeaponClasses); weaponIndex++) {
           ResetPlayerWeaponData(clientIndex, weaponIndex, CS_TEAM_T);
           ResetPlayerWeaponData(clientIndex, weaponIndex, CS_TEAM_CT);
+          g_iSkins[clientIndex][weaponIndex][CS_TEAM_T] = -1;
+          g_iSkins[clientIndex][weaponIndex][CS_TEAM_CT] = -1;
+          g_iStatTrak[clientIndex][weaponIndex][CS_TEAM_T] = 1;
+          g_iStatTrak[clientIndex][weaponIndex][CS_TEAM_CT] = 1;
         }
-        g_iKnife[clientIndex][CS_TEAM_T] = 0;
-        g_iKnife[clientIndex][CS_TEAM_CT] = 0;
+        g_iKnife[clientIndex][CS_TEAM_T] = -1;
+        g_iKnife[clientIndex][CS_TEAM_CT] = -1;
       }
     } else {
       bool shouldUpdateKnife = false;
