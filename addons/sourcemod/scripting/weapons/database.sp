@@ -109,18 +109,32 @@ public void T_GetPlayerDataCallback(Database database, DBResultSet results, cons
     } else if (results.RowCount == 0) {
       char steamid[32];
       if (GetClientAuthId(clientIndex, AuthId_Steam2, steamid, sizeof(steamid), true)) {
-        char query[255];
-        FormatEx(query, sizeof(query), "INSERT INTO %sweapons (steamid) VALUES ('%s')", g_TablePrefix, steamid);
+        char columns[8192];
+        char values[4096];
+        int columnsIndex = FormatEx(columns, sizeof(columns), "steamid, knife, knife_ct");
+        int valuesIndex = FormatEx(values, sizeof(values), "'%s', -1, -1", steamid);
+        for (int weaponIndex = 0; weaponIndex < sizeof(g_WeaponClasses); weaponIndex++) {
+          char weaponName[32];
+          RemoveWeaponPrefix(g_WeaponClasses[weaponIndex], weaponName, sizeof(weaponName));
+          columnsIndex += FormatEx(columns[columnsIndex], sizeof(columns) - columnsIndex,
+                                   ", %s, %s_trak, ct_%s, ct_%s_trak", weaponName, weaponName, weaponName,
+                                   weaponName);
+          valuesIndex += FormatEx(values[valuesIndex], sizeof(values) - valuesIndex, ", -1, 1, -1, 1");
+          ResetPlayerWeaponData(clientIndex, weaponIndex, CS_TEAM_T);
+          ResetPlayerWeaponData(clientIndex, weaponIndex, CS_TEAM_CT);
+          g_iSkins[clientIndex][weaponIndex][CS_TEAM_T] = -1;
+          g_iSkins[clientIndex][weaponIndex][CS_TEAM_CT] = -1;
+          g_iStatTrak[clientIndex][weaponIndex][CS_TEAM_T] = 1;
+          g_iStatTrak[clientIndex][weaponIndex][CS_TEAM_CT] = 1;
+        }
+        char query[16384];
+        FormatEx(query, sizeof(query), "INSERT INTO %sweapons (%s) VALUES (%s)", g_TablePrefix, columns, values);
         DataPack pack = new DataPack();
         pack.WriteString(steamid);
         pack.WriteString(query);
         db.Query(T_InsertCallback, query, pack);
-        for (int weaponIndex = 0; weaponIndex < sizeof(g_WeaponClasses); weaponIndex++) {
-          ResetPlayerWeaponData(clientIndex, weaponIndex, CS_TEAM_T);
-          ResetPlayerWeaponData(clientIndex, weaponIndex, CS_TEAM_CT);
-        }
-        g_iKnife[clientIndex][CS_TEAM_T] = 0;
-        g_iKnife[clientIndex][CS_TEAM_CT] = 0;
+        g_iKnife[clientIndex][CS_TEAM_T] = -1;
+        g_iKnife[clientIndex][CS_TEAM_CT] = -1;
       }
     } else {
       bool shouldUpdateKnife = false;

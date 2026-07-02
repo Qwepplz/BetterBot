@@ -43,9 +43,15 @@ public void T_GetPlayerDataCallback(Database database, DBResultSet results, cons
 		if (GetClientAuthId(client, AuthId_Steam2, steamid, sizeof(steamid), true))
 		{
 			char query[255];
-			FormatEx(query, sizeof(query), "INSERT INTO %sgloves (steamid) VALUES ('%s')", g_TablePrefix, steamid);
+			FormatEx(query, sizeof(query),
+				"INSERT INTO %sgloves (steamid, t_group, t_glove, ct_group, ct_glove) VALUES ('%s', -1, -1, -1, -1)",
+				g_TablePrefix, steamid);
 			db.Query(T_InsertCallback, query);
 		}
+		g_iGroup[client][CS_TEAM_T] = -1;
+		g_iGloves[client][CS_TEAM_T] = -1;
+		g_iGroup[client][CS_TEAM_CT] = -1;
+		g_iGloves[client][CS_TEAM_CT] = -1;
 		return;
 	}
 

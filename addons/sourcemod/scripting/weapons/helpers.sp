@@ -64,7 +64,7 @@ stock int GetRandomSkin(int client, int index) {
   int language = GetClientMenuLanguage(client);
   int max = menuWeapons[language][index].ItemCount - 1;
   int random = GetRandomInt(2, max);
-  char idStr[4];
+  char idStr[32];
   menuWeapons[language][index].GetItem(random, idStr, sizeof(idStr));
   return StringToInt(idStr);
 }
