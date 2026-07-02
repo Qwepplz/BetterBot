@@ -109,32 +109,18 @@ public void T_GetPlayerDataCallback(Database database, DBResultSet results, cons
     } else if (results.RowCount == 0) {
       char steamid[32];
       if (GetClientAuthId(clientIndex, AuthId_Steam2, steamid, sizeof(steamid), true)) {
-        char columns[8192];
-        char values[4096];
-        int columnsIndex = FormatEx(columns, sizeof(columns), "steamid, knife, knife_ct");
-        int valuesIndex = FormatEx(values, sizeof(values), "'%s', -1, -1", steamid);
-        for (int weaponIndex = 0; weaponIndex < sizeof(g_WeaponClasses); weaponIndex++) {
-          char weaponName[32];
-          RemoveWeaponPrefix(g_WeaponClasses[weaponIndex], weaponName, sizeof(weaponName));
-          columnsIndex += FormatEx(columns[columnsIndex], sizeof(columns) - columnsIndex,
-                                   ", %s, %s_trak, ct_%s, ct_%s_trak", weaponName, weaponName, weaponName,
-                                   weaponName);
-          valuesIndex += FormatEx(values[valuesIndex], sizeof(values) - valuesIndex, ", -1, 1, -1, 1");
-          ResetPlayerWeaponData(clientIndex, weaponIndex, CS_TEAM_T);
-          ResetPlayerWeaponData(clientIndex, weaponIndex, CS_TEAM_CT);
-          g_iSkins[clientIndex][weaponIndex][CS_TEAM_T] = -1;
-          g_iSkins[clientIndex][weaponIndex][CS_TEAM_CT] = -1;
-          g_iStatTrak[clientIndex][weaponIndex][CS_TEAM_T] = 1;
-          g_iStatTrak[clientIndex][weaponIndex][CS_TEAM_CT] = 1;
-        }
-        char query[16384];
-        FormatEx(query, sizeof(query), "INSERT INTO %sweapons (%s) VALUES (%s)", g_TablePrefix, columns, values);
+        char query[255];
+        FormatEx(query, sizeof(query), "INSERT INTO %sweapons (steamid) VALUES ('%s')", g_TablePrefix, steamid);
         DataPack pack = new DataPack();
         pack.WriteString(steamid);
         pack.WriteString(query);
         db.Query(T_InsertCallback, query, pack);
-        g_iKnife[clientIndex][CS_TEAM_T] = -1;
-        g_iKnife[clientIndex][CS_TEAM_CT] = -1;
+        for (int weaponIndex = 0; weaponIndex < sizeof(g_WeaponClasses); weaponIndex++) {
+          ResetPlayerWeaponData(clientIndex, weaponIndex, CS_TEAM_T);
+          ResetPlayerWeaponData(clientIndex, weaponIndex, CS_TEAM_CT);
+        }
+        g_iKnife[clientIndex][CS_TEAM_T] = 0;
+        g_iKnife[clientIndex][CS_TEAM_CT] = 0;
       }
     } else {
       bool shouldUpdateKnife = false;
@@ -242,337 +228,338 @@ void CreateMainTable(bool mysql, bool recreate = false) {
   index += FormatEx(createQuery[index], sizeof(createQuery) - index, "	\
 		CREATE TABLE IF NOT EXISTS %sweapons (								\
 			steamid varchar(32) NOT NULL PRIMARY KEY, 						\
-			knife int(4) NOT NULL DEFAULT '0', 								\
-			awp int(4) NOT NULL DEFAULT '0', 								\
+			knife int(4) NOT NULL DEFAULT '-1', 								\
+			awp int(4) NOT NULL DEFAULT '-1', 								\
 			awp_float decimal(3,2) NOT NULL DEFAULT '0.0', 					\
-			awp_trak int(1) NOT NULL DEFAULT '0', 							\
+			awp_trak int(1) NOT NULL DEFAULT '1', 							\
 			awp_trak_count int(10) NOT NULL DEFAULT '0', 					\
 			awp_tag varchar(128) NOT NULL DEFAULT '', 						\
 			awp_seed int(10) NOT NULL DEFAULT '-1',							\
-			ak47 int(4) NOT NULL DEFAULT '0', 								\
+			ak47 int(4) NOT NULL DEFAULT '-1', 								\
 			ak47_float decimal(3,2) NOT NULL DEFAULT '0.0', 				\
-			ak47_trak int(1) NOT NULL DEFAULT '0', 							\
+			ak47_trak int(1) NOT NULL DEFAULT '1', 							\
 			ak47_trak_count int(10) NOT NULL DEFAULT '0', 					\
 			ak47_tag varchar(128) NOT NULL DEFAULT '', 						\
 			ak47_seed int(10) NOT NULL DEFAULT '-1',						\
-			m4a1 int(4) NOT NULL DEFAULT '0', 								\
+			m4a1 int(4) NOT NULL DEFAULT '-1', 								\
 			m4a1_float decimal(3,2) NOT NULL DEFAULT '0.0', 				\
-			m4a1_trak int(1) NOT NULL DEFAULT '0', 							\
+			m4a1_trak int(1) NOT NULL DEFAULT '1', 							\
 			m4a1_trak_count int(10) NOT NULL DEFAULT '0', 					\
 			m4a1_tag varchar(128) NOT NULL DEFAULT '',						\
 			m4a1_seed int(10) NOT NULL DEFAULT '-1', ",
                     g_TablePrefix);
   index += FormatEx(createQuery[index], sizeof(createQuery) - index, "	\
-			m4a1_silencer int(4) NOT NULL DEFAULT '0', 						\
+			m4a1_silencer int(4) NOT NULL DEFAULT '-1', 						\
 			m4a1_silencer_float decimal(3,2) NOT NULL DEFAULT '0.0', 		\
-			m4a1_silencer_trak int(1) NOT NULL DEFAULT '0', 				\
+			m4a1_silencer_trak int(1) NOT NULL DEFAULT '1', 				\
 			m4a1_silencer_trak_count int(10) NOT NULL DEFAULT '0', 			\
 			m4a1_silencer_tag varchar(128) NOT NULL DEFAULT '', 			\
 			m4a1_silencer_seed int(10) NOT NULL DEFAULT '-1',				\
-			deagle int(4) NOT NULL DEFAULT '0', 							\
+			deagle int(4) NOT NULL DEFAULT '-1', 							\
 			deagle_float decimal(3,2) NOT NULL DEFAULT '0.0', 				\
-			deagle_trak int(1) NOT NULL DEFAULT '0', 						\
+			deagle_trak int(1) NOT NULL DEFAULT '1', 						\
 			deagle_trak_count int(10) NOT NULL DEFAULT '0', 				\
 			deagle_tag varchar(128) NOT NULL DEFAULT '', 					\
 			deagle_seed int(10) NOT NULL DEFAULT '-1',						\
-			usp_silencer int(4) NOT NULL DEFAULT '0', 						\
+			usp_silencer int(4) NOT NULL DEFAULT '-1', 						\
 			usp_silencer_float decimal(3,2) NOT NULL DEFAULT '0.0', 		\
-			usp_silencer_trak int(1) NOT NULL DEFAULT '0', 					\
+			usp_silencer_trak int(1) NOT NULL DEFAULT '1', 					\
 			usp_silencer_trak_count int(10) NOT NULL DEFAULT '0', 			\
 			usp_silencer_tag varchar(128) NOT NULL DEFAULT '', 				\
 			usp_silencer_seed int(10) NOT NULL DEFAULT '-1',				\
-			hkp2000 int(4) NOT NULL DEFAULT '0', 							\
+			hkp2000 int(4) NOT NULL DEFAULT '-1', 							\
 			hkp2000_float decimal(3,2) NOT NULL DEFAULT '0.0', 				\
-			hkp2000_trak int(1) NOT NULL DEFAULT '0', ");
+			hkp2000_trak int(1) NOT NULL DEFAULT '1', ");
   index += FormatEx(createQuery[index], sizeof(createQuery) - index, "	\
 			hkp2000_trak_count int(10) NOT NULL DEFAULT '0', 				\
 			hkp2000_tag varchar(128) NOT NULL DEFAULT '', 					\
 			hkp2000_seed int(10) NOT NULL DEFAULT '-1',						\
-			glock int(4) NOT NULL DEFAULT '0', 								\
+			glock int(4) NOT NULL DEFAULT '-1', 								\
 			glock_float decimal(3,2) NOT NULL DEFAULT '0.0', 				\
-			glock_trak int(1) NOT NULL DEFAULT '0', 						\
+			glock_trak int(1) NOT NULL DEFAULT '1', 						\
 			glock_trak_count int(10) NOT NULL DEFAULT '0', 					\
 			glock_tag varchar(128) NOT NULL DEFAULT '', 					\
 			glock_seed int(10) NOT NULL DEFAULT '-1',						\
-			elite int(4) NOT NULL DEFAULT '0', 								\
+			elite int(4) NOT NULL DEFAULT '-1', 								\
 			elite_float decimal(3,2) NOT NULL DEFAULT '0.0', 				\
-			elite_trak int(1) NOT NULL DEFAULT '0', 						\
+			elite_trak int(1) NOT NULL DEFAULT '1', 						\
 			elite_trak_count int(10) NOT NULL DEFAULT '0', 					\
 			elite_tag varchar(128) NOT NULL DEFAULT '', 					\
 			elite_seed int(10) NOT NULL DEFAULT '-1',						\
-			p250 int(4) NOT NULL DEFAULT '0', 								\
+			p250 int(4) NOT NULL DEFAULT '-1', 								\
 			p250_float decimal(3,2) NOT NULL DEFAULT '0.0', 				\
-			p250_trak int(1) NOT NULL DEFAULT '0', 							\
+			p250_trak int(1) NOT NULL DEFAULT '1', 							\
 			p250_trak_count int(10) NOT NULL DEFAULT '0', 					\
 			p250_tag varchar(128) NOT NULL DEFAULT '', 						\
 			p250_seed int(10) NOT NULL DEFAULT '-1',						\
-			cz75a int(4) NOT NULL DEFAULT '0', ");
+			cz75a int(4) NOT NULL DEFAULT '-1', ");
   index += FormatEx(createQuery[index], sizeof(createQuery) - index, "	\
 			cz75a_float decimal(3,2) NOT NULL DEFAULT '0.0', 				\
-			cz75a_trak int(1) NOT NULL DEFAULT '0', 						\
+			cz75a_trak int(1) NOT NULL DEFAULT '1', 						\
 			cz75a_trak_count int(10) NOT NULL DEFAULT '0', 					\
 			cz75a_tag varchar(128) NOT NULL DEFAULT '', 					\
 			cz75a_seed int(10) NOT NULL DEFAULT '-1',						\
-			fiveseven int(4) NOT NULL DEFAULT '0', 							\
+			fiveseven int(4) NOT NULL DEFAULT '-1', 							\
 			fiveseven_float decimal(3,2) NOT NULL DEFAULT '0.0', 			\
-			fiveseven_trak int(1) NOT NULL DEFAULT '0', 					\
+			fiveseven_trak int(1) NOT NULL DEFAULT '1', 					\
 			fiveseven_trak_count int(10) NOT NULL DEFAULT '0', 				\
 			fiveseven_tag varchar(128) NOT NULL DEFAULT '', 				\
 			fiveseven_seed int(10) NOT NULL DEFAULT '-1',					\
-			tec9 int(4) NOT NULL DEFAULT '0', 								\
+			tec9 int(4) NOT NULL DEFAULT '-1', 								\
 			tec9_float decimal(3,2) NOT NULL DEFAULT '0.0', 				\
-			tec9_trak int(1) NOT NULL DEFAULT '0', 							\
+			tec9_trak int(1) NOT NULL DEFAULT '1', 							\
 			tec9_trak_count int(10) NOT NULL DEFAULT '0', 					\
 			tec9_tag varchar(128) NOT NULL DEFAULT '', 						\
 			tec9_seed int(10) NOT NULL DEFAULT '-1',						\
-			revolver int(4) NOT NULL DEFAULT '0', 							\
+			revolver int(4) NOT NULL DEFAULT '-1', 							\
 			revolver_float decimal(3,2) NOT NULL DEFAULT '0.0', 			\
-			revolver_trak int(1) NOT NULL DEFAULT '0', 						\
+			revolver_trak int(1) NOT NULL DEFAULT '1', 						\
 			revolver_trak_count int(10) NOT NULL DEFAULT '0', ");
   index += FormatEx(createQuery[index], sizeof(createQuery) - index, "	\
 			revolver_tag varchar(128) NOT NULL DEFAULT '', 					\
 			revolver_seed int(10) NOT NULL DEFAULT '-1',					\
-			nova int(4) NOT NULL DEFAULT '0', 								\
+			nova int(4) NOT NULL DEFAULT '-1', 								\
 			nova_float decimal(3,2) NOT NULL DEFAULT '0.0', 				\
-			nova_trak int(1) NOT NULL DEFAULT '0', 							\
+			nova_trak int(1) NOT NULL DEFAULT '1', 							\
 			nova_trak_count int(10) NOT NULL DEFAULT '0', 					\
 			nova_tag varchar(128) NOT NULL DEFAULT '', 						\
 			nova_seed int(10) NOT NULL DEFAULT '-1',						\
-			xm1014 int(4) NOT NULL DEFAULT '0', 							\
+			xm1014 int(4) NOT NULL DEFAULT '-1', 							\
 			xm1014_float decimal(3,2) NOT NULL DEFAULT '0.0', 				\
-			xm1014_trak int(1) NOT NULL DEFAULT '0', 						\
+			xm1014_trak int(1) NOT NULL DEFAULT '1', 						\
 			xm1014_trak_count int(10) NOT NULL DEFAULT '0', 				\
 			xm1014_tag varchar(128) NOT NULL DEFAULT '', 					\
 			xm1014_seed int(10) NOT NULL DEFAULT '-1',						\
-			mag7 int(4) NOT NULL DEFAULT '0', 								\
+			mag7 int(4) NOT NULL DEFAULT '-1', 								\
 			mag7_float decimal(3,2) NOT NULL DEFAULT '0.0', 				\
-			mag7_trak int(1) NOT NULL DEFAULT '0', 							\
+			mag7_trak int(1) NOT NULL DEFAULT '1', 							\
 			mag7_trak_count int(10) NOT NULL DEFAULT '0', 					\
 			mag7_tag varchar(128) NOT NULL DEFAULT '', 						\
 			mag7_seed int(10) NOT NULL DEFAULT '-1',						\
-			sawedoff int(4) NOT NULL DEFAULT '0', 							\
+			sawedoff int(4) NOT NULL DEFAULT '-1', 							\
 			sawedoff_float decimal(3,2) NOT NULL DEFAULT '0.0', ");
   index += FormatEx(createQuery[index], sizeof(createQuery) - index, "	\
-			sawedoff_trak int(1) NOT NULL DEFAULT '0', 						\
+			sawedoff_trak int(1) NOT NULL DEFAULT '1', 						\
 			sawedoff_trak_count int(10) NOT NULL DEFAULT '0', 				\
 			sawedoff_tag varchar(128) NOT NULL DEFAULT '', 					\
 			sawedoff_seed int(10) NOT NULL DEFAULT '-1',					\
-			m249 int(4) NOT NULL DEFAULT '0', 								\
+			m249 int(4) NOT NULL DEFAULT '-1', 								\
 			m249_float decimal(3,2) NOT NULL DEFAULT '0.0', 				\
-			m249_trak int(1) NOT NULL DEFAULT '0', 							\
+			m249_trak int(1) NOT NULL DEFAULT '1', 							\
 			m249_trak_count int(10) NOT NULL DEFAULT '0', 					\
 			m249_tag varchar(128) NOT NULL DEFAULT '', 						\
 			m249_seed int(10) NOT NULL DEFAULT '-1',						\
-			negev int(4) NOT NULL DEFAULT '0', 								\
+			negev int(4) NOT NULL DEFAULT '-1', 								\
 			negev_float decimal(3,2) NOT NULL DEFAULT '0.0', 				\
-			negev_trak int(1) NOT NULL DEFAULT '0', 						\
+			negev_trak int(1) NOT NULL DEFAULT '1', 						\
 			negev_trak_count int(10) NOT NULL DEFAULT '0', 					\
 			negev_tag varchar(128) NOT NULL DEFAULT '', 					\
 			negev_seed int(10) NOT NULL DEFAULT '-1',						\
-			mp9 int(4) NOT NULL DEFAULT '0', 								\
+			mp9 int(4) NOT NULL DEFAULT '-1', 								\
 			mp9_float decimal(3,2) NOT NULL DEFAULT '0.0', 					\
-			mp9_trak int(1) NOT NULL DEFAULT '0', 							\
+			mp9_trak int(1) NOT NULL DEFAULT '1', 							\
 			mp9_trak_count int(10) NOT NULL DEFAULT '0', 					\
 			mp9_tag varchar(128) NOT NULL DEFAULT '',						\
 			mp9_seed int(10) NOT NULL DEFAULT '-1', ");
   index += FormatEx(createQuery[index], sizeof(createQuery) - index, "	\
-			mac10 int(4) NOT NULL DEFAULT '0', 								\
+			mac10 int(4) NOT NULL DEFAULT '-1', 								\
 			mac10_float decimal(3,2) NOT NULL DEFAULT '0.0', 				\
-			mac10_trak int(1) NOT NULL DEFAULT '0', 						\
+			mac10_trak int(1) NOT NULL DEFAULT '1', 						\
 			mac10_trak_count int(10) NOT NULL DEFAULT '0', 					\
 			mac10_tag varchar(128) NOT NULL DEFAULT '', 					\
 			mac10_seed int(10) NOT NULL DEFAULT '-1',						\
-			mp7 int(4) NOT NULL DEFAULT '0', 								\
+			mp7 int(4) NOT NULL DEFAULT '-1', 								\
 			mp7_float decimal(3,2) NOT NULL DEFAULT '0.0', 					\
-			mp7_trak int(1) NOT NULL DEFAULT '0', 							\
+			mp7_trak int(1) NOT NULL DEFAULT '1', 							\
 			mp7_trak_count int(10) NOT NULL DEFAULT '0', 					\
 			mp7_tag varchar(128) NOT NULL DEFAULT '', 						\
 			mp7_seed int(10) NOT NULL DEFAULT '-1',							\
-			ump45 int(4) NOT NULL DEFAULT '0', 								\
+			ump45 int(4) NOT NULL DEFAULT '-1', 								\
 			ump45_float decimal(3,2) NOT NULL DEFAULT '0.0', 				\
-			ump45_trak int(1) NOT NULL DEFAULT '0', 						\
+			ump45_trak int(1) NOT NULL DEFAULT '1', 						\
 			ump45_trak_count int(10) NOT NULL DEFAULT '0', 					\
 			ump45_tag varchar(128) NOT NULL DEFAULT '', 					\
 			ump45_seed int(10) NOT NULL DEFAULT '-1',						\
-			p90 int(4) NOT NULL DEFAULT '0', 								\
+			p90 int(4) NOT NULL DEFAULT '-1', 								\
 			p90_float decimal(3,2) NOT NULL DEFAULT '0.0', 					\
-			p90_trak int(1) NOT NULL DEFAULT '0', ");
+			p90_trak int(1) NOT NULL DEFAULT '1', ");
   index += FormatEx(createQuery[index], sizeof(createQuery) - index, "	\
 			p90_trak_count int(10) NOT NULL DEFAULT '0', 					\
 			p90_tag varchar(128) NOT NULL DEFAULT '', 						\
 			p90_seed int(10) NOT NULL DEFAULT '-1',							\
-			bizon int(4) NOT NULL DEFAULT '0', 								\
+			bizon int(4) NOT NULL DEFAULT '-1', 								\
 			bizon_float decimal(3,2) NOT NULL DEFAULT '0.0', 				\
-			bizon_trak int(1) NOT NULL DEFAULT '0', 						\
+			bizon_trak int(1) NOT NULL DEFAULT '1', 						\
 			bizon_trak_count int(10) NOT NULL DEFAULT '0', 					\
 			bizon_tag varchar(128) NOT NULL DEFAULT '', 					\
 			bizon_seed int(10) NOT NULL DEFAULT '-1',						\
-			famas int(4) NOT NULL DEFAULT '0', 								\
+			famas int(4) NOT NULL DEFAULT '-1', 								\
 			famas_float decimal(3,2) NOT NULL DEFAULT '0.0', 				\
-			famas_trak int(1) NOT NULL DEFAULT '0', 						\
+			famas_trak int(1) NOT NULL DEFAULT '1', 						\
 			famas_trak_count int(10) NOT NULL DEFAULT '0', 					\
 			famas_tag varchar(128) NOT NULL DEFAULT '', 					\
-			famas_seed int(10) NOT NULL DEFAULT '-1',						\
-			galilar int(4) NOT NULL DEFAULT '0', 							\
+			famas_seed int(10) NOT NULL DEFAULT '-1', ");
+  index += FormatEx(createQuery[index], sizeof(createQuery) - index, "	\
+			galilar int(4) NOT NULL DEFAULT '-1', 							\
 			galilar_float decimal(3,2) NOT NULL DEFAULT '0.0', 				\
-			galilar_trak int(1) NOT NULL DEFAULT '0', 						\
+			galilar_trak int(1) NOT NULL DEFAULT '1', 						\
 			galilar_trak_count int(10) NOT NULL DEFAULT '0', 				\
 			galilar_tag varchar(128) NOT NULL DEFAULT '', 					\
 			galilar_seed int(10) NOT NULL DEFAULT '-1',						\
-			ssg08 int(4) NOT NULL DEFAULT '0', ");
+			ssg08 int(4) NOT NULL DEFAULT '-1', ");
   index += FormatEx(createQuery[index], sizeof(createQuery) - index, "	\
 			ssg08_float decimal(3,2) NOT NULL DEFAULT '0.0', 				\
-			ssg08_trak int(1) NOT NULL DEFAULT '0', 						\
+			ssg08_trak int(1) NOT NULL DEFAULT '1', 						\
 			ssg08_trak_count int(10) NOT NULL DEFAULT '0', 					\
 			ssg08_tag varchar(128) NOT NULL DEFAULT '', 					\
 			ssg08_seed int(10) NOT NULL DEFAULT '-1',						\
-			aug int(4) NOT NULL DEFAULT '0', 								\
+			aug int(4) NOT NULL DEFAULT '-1', 								\
 			aug_float decimal(3,2) NOT NULL DEFAULT '0.0', 					\
-			aug_trak int(1) NOT NULL DEFAULT '0', 							\
+			aug_trak int(1) NOT NULL DEFAULT '1', 							\
 			aug_trak_count int(10) NOT NULL DEFAULT '0', 					\
 			aug_tag varchar(128) NOT NULL DEFAULT '', 						\
 			aug_seed int(10) NOT NULL DEFAULT '-1',							\
-			sg556 int(4) NOT NULL DEFAULT '0', 								\
+			sg556 int(4) NOT NULL DEFAULT '-1', 								\
 			sg556_float decimal(3,2) NOT NULL DEFAULT '0.0', 				\
-			sg556_trak int(1) NOT NULL DEFAULT '0', 						\
+			sg556_trak int(1) NOT NULL DEFAULT '1', 						\
 			sg556_trak_count int(10) NOT NULL DEFAULT '0', 					\
 			sg556_tag varchar(128) NOT NULL DEFAULT '', 					\
 			sg556_seed int(10) NOT NULL DEFAULT '-1',						\
-			scar20 int(4) NOT NULL DEFAULT '0', 							\
+			scar20 int(4) NOT NULL DEFAULT '-1', 							\
 			scar20_float decimal(3,2) NOT NULL DEFAULT '0.0', 				\
-			scar20_trak int(1) NOT NULL DEFAULT '0', 						\
+			scar20_trak int(1) NOT NULL DEFAULT '1', 						\
 			scar20_trak_count int(10) NOT NULL DEFAULT '0', ");
   index += FormatEx(createQuery[index], sizeof(createQuery) - index, "	\
 			scar20_tag varchar(128) NOT NULL DEFAULT '', 					\
 			scar20_seed int(10) NOT NULL DEFAULT '-1',						\
-			g3sg1 int(4) NOT NULL DEFAULT '0', 								\
+			g3sg1 int(4) NOT NULL DEFAULT '-1', 								\
 			g3sg1_float decimal(3,2) NOT NULL DEFAULT '0.0', 				\
-			g3sg1_trak int(1) NOT NULL DEFAULT '0', 						\
+			g3sg1_trak int(1) NOT NULL DEFAULT '1', 						\
 			g3sg1_trak_count int(10) NOT NULL DEFAULT '0', 					\
 			g3sg1_tag varchar(128) NOT NULL DEFAULT '', 					\
 			g3sg1_seed int(10) NOT NULL DEFAULT '-1',						\
-			knife_karambit int(4) NOT NULL DEFAULT '0', 					\
+			knife_karambit int(4) NOT NULL DEFAULT '-1', 					\
 			knife_karambit_float decimal(3,2) NOT NULL DEFAULT '0.0', 		\
-			knife_karambit_trak int(1) NOT NULL DEFAULT '0', 				\
+			knife_karambit_trak int(1) NOT NULL DEFAULT '1', 				\
 			knife_karambit_trak_count int(10) NOT NULL DEFAULT '0', 		\
 			knife_karambit_tag varchar(128) NOT NULL DEFAULT '', 			\
 			knife_karambit_seed int(10) NOT NULL DEFAULT '-1',				\
-			knife_m9_bayonet int(4) NOT NULL DEFAULT '0', 					\
+			knife_m9_bayonet int(4) NOT NULL DEFAULT '-1', 					\
 			knife_m9_bayonet_float decimal(3,2) NOT NULL DEFAULT '0.0', 	\
-			knife_m9_bayonet_trak int(1) NOT NULL DEFAULT '0', 				\
+			knife_m9_bayonet_trak int(1) NOT NULL DEFAULT '1', 				\
 			knife_m9_bayonet_trak_count int(10) NOT NULL DEFAULT '0', 		\
 			knife_m9_bayonet_tag varchar(128) NOT NULL DEFAULT '', 			\
 			knife_m9_bayonet_seed int(10) NOT NULL DEFAULT '-1',			\
-			bayonet int(4) NOT NULL DEFAULT '0', 							\
+			bayonet int(4) NOT NULL DEFAULT '-1', 							\
 			bayonet_float decimal(3,2) NOT NULL DEFAULT '0.0', ");
   index += FormatEx(createQuery[index], sizeof(createQuery) - index, "	\
-			bayonet_trak int(1) NOT NULL DEFAULT '0', 						\
+			bayonet_trak int(1) NOT NULL DEFAULT '1', 						\
 			bayonet_trak_count int(10) NOT NULL DEFAULT '0', 				\
 			bayonet_tag varchar(128) NOT NULL DEFAULT '', 					\
 			bayonet_seed int(10) NOT NULL DEFAULT '-1',						\
-			knife_survival_bowie int(4) NOT NULL DEFAULT '0', 				\
+			knife_survival_bowie int(4) NOT NULL DEFAULT '-1', 				\
 			knife_survival_bowie_float decimal(3,2) NOT NULL DEFAULT '0.0', \
-			knife_survival_bowie_trak int(1) NOT NULL DEFAULT '0', 			\
+			knife_survival_bowie_trak int(1) NOT NULL DEFAULT '1', 			\
 			knife_survival_bowie_trak_count int(10) NOT NULL DEFAULT '0', 	\
 			knife_survival_bowie_tag varchar(128) NOT NULL DEFAULT '', 		\
 			knife_survival_bowie_seed int(10) NOT NULL DEFAULT '-1',		\
-			knife_butterfly int(4) NOT NULL DEFAULT '0', 					\
+			knife_butterfly int(4) NOT NULL DEFAULT '-1', 					\
 			knife_butterfly_float decimal(3,2) NOT NULL DEFAULT '0.0', 		\
-			knife_butterfly_trak int(1) NOT NULL DEFAULT '0', 				\
+			knife_butterfly_trak int(1) NOT NULL DEFAULT '1', 				\
 			knife_butterfly_trak_count int(10) NOT NULL DEFAULT '0', 		\
 			knife_butterfly_tag varchar(128) NOT NULL DEFAULT '', 			\
 			knife_butterfly_seed int(10) NOT NULL DEFAULT '-1',				\
-			knife_flip int(4) NOT NULL DEFAULT '0', 						\
+			knife_flip int(4) NOT NULL DEFAULT '-1', 						\
 			knife_flip_float decimal(3,2) NOT NULL DEFAULT '0.0', 			\
-			knife_flip_trak int(1) NOT NULL DEFAULT '0', 					\
+			knife_flip_trak int(1) NOT NULL DEFAULT '1', 					\
 			knife_flip_trak_count int(10) NOT NULL DEFAULT '0', 			\
 			knife_flip_tag varchar(128) NOT NULL DEFAULT '',				\
 			knife_flip_seed int(10) NOT NULL DEFAULT '-1', ");
   index += FormatEx(createQuery[index], sizeof(createQuery) - index, "	\
-			knife_push int(4) NOT NULL DEFAULT '0', 						\
+			knife_push int(4) NOT NULL DEFAULT '-1', 						\
 			knife_push_float decimal(3,2) NOT NULL DEFAULT '0.0', 			\
-			knife_push_trak int(1) NOT NULL DEFAULT '0', 					\
+			knife_push_trak int(1) NOT NULL DEFAULT '1', 					\
 			knife_push_trak_count int(10) NOT NULL DEFAULT '0', 			\
 			knife_push_tag varchar(128) NOT NULL DEFAULT '', 				\
 			knife_push_seed int(10) NOT NULL DEFAULT '-1',					\
-			knife_tactical int(4) NOT NULL DEFAULT '0', 					\
+			knife_tactical int(4) NOT NULL DEFAULT '-1', 					\
 			knife_tactical_float decimal(3,2) NOT NULL DEFAULT '0.0', 		\
-			knife_tactical_trak int(1) NOT NULL DEFAULT '0', 				\
+			knife_tactical_trak int(1) NOT NULL DEFAULT '1', 				\
 			knife_tactical_trak_count int(10) NOT NULL DEFAULT '0', 		\
 			knife_tactical_tag varchar(128) NOT NULL DEFAULT '', 			\
 			knife_tactical_seed int(10) NOT NULL DEFAULT '-1',				\
-			knife_falchion int(4) NOT NULL DEFAULT '0', 					\
+			knife_falchion int(4) NOT NULL DEFAULT '-1', 					\
 			knife_falchion_float decimal(3,2) NOT NULL DEFAULT '0.0', 		\
-			knife_falchion_trak int(1) NOT NULL DEFAULT '0', 				\
+			knife_falchion_trak int(1) NOT NULL DEFAULT '1', 				\
 			knife_falchion_trak_count int(10) NOT NULL DEFAULT '0', 		\
 			knife_falchion_tag varchar(128) NOT NULL DEFAULT '', 			\
 			knife_falchion_seed int(10) NOT NULL DEFAULT '-1',				\
-			knife_gut int(4) NOT NULL DEFAULT '0', 							\
+			knife_gut int(4) NOT NULL DEFAULT '-1', 							\
 			knife_gut_float decimal(3,2) NOT NULL DEFAULT '0.0', 			\
-			knife_gut_trak int(1) NOT NULL DEFAULT '0', ");
+			knife_gut_trak int(1) NOT NULL DEFAULT '1', ");
   index += FormatEx(createQuery[index], sizeof(createQuery) - index, "	\
 			knife_gut_trak_count int(10) NOT NULL DEFAULT '0', 				\
 			knife_gut_tag varchar(128) NOT NULL DEFAULT '', 				\
 			knife_gut_seed int(10) NOT NULL DEFAULT '-1',					\
-			knife_ursus int(4) NOT NULL DEFAULT '0', 						\
+			knife_ursus int(4) NOT NULL DEFAULT '-1', 						\
 			knife_ursus_float decimal(3,2) NOT NULL DEFAULT '0.0', 			\
-			knife_ursus_trak int(1) NOT NULL DEFAULT '0', 					\
+			knife_ursus_trak int(1) NOT NULL DEFAULT '1', 					\
 			knife_ursus_trak_count int(10) NOT NULL DEFAULT '0', 			\
 			knife_ursus_tag varchar(128) NOT NULL DEFAULT '', 				\
 			knife_ursus_seed int(10) NOT NULL DEFAULT '-1',					\
-			knife_gypsy_jackknife int(4) NOT NULL DEFAULT '0', 				\
+			knife_gypsy_jackknife int(4) NOT NULL DEFAULT '-1', 				\
 			knife_gypsy_jackknife_float decimal(3,2) NOT NULL DEFAULT '0.0',\
-			knife_gypsy_jackknife_trak int(1) NOT NULL DEFAULT '0', 		\
+			knife_gypsy_jackknife_trak int(1) NOT NULL DEFAULT '1', 		\
 			knife_gypsy_jackknife_trak_count int(10) NOT NULL DEFAULT '0', 	\
 			knife_gypsy_jackknife_tag varchar(128) NOT NULL DEFAULT '', 	\
 			knife_gypsy_jackknife_seed int(10) NOT NULL DEFAULT '-1',		\
-			knife_stiletto int(4) NOT NULL DEFAULT '0', 					\
+			knife_stiletto int(4) NOT NULL DEFAULT '-1', 					\
 			knife_stiletto_float decimal(3,2) NOT NULL DEFAULT '0.0', 		\
-			knife_stiletto_trak int(1) NOT NULL DEFAULT '0', 				\
+			knife_stiletto_trak int(1) NOT NULL DEFAULT '1', 				\
 			knife_stiletto_trak_count int(10) NOT NULL DEFAULT '0', 		\
 			knife_stiletto_tag varchar(128) NOT NULL DEFAULT '', 			\
 			knife_stiletto_seed int(10) NOT NULL DEFAULT '-1',				\
-			knife_widowmaker int(4) NOT NULL DEFAULT '0', ");
+			knife_widowmaker int(4) NOT NULL DEFAULT '-1', ");
   index += FormatEx(createQuery[index], sizeof(createQuery) - index, "	\
 			knife_widowmaker_float decimal(3,2) NOT NULL DEFAULT '0.0', 	\
-			knife_widowmaker_trak int(1) NOT NULL DEFAULT '0', 				\
+			knife_widowmaker_trak int(1) NOT NULL DEFAULT '1', 				\
 			knife_widowmaker_trak_count int(10) NOT NULL DEFAULT '0', 		\
 			knife_widowmaker_tag varchar(128) NOT NULL DEFAULT '',			\
 			knife_widowmaker_seed int(10) NOT NULL DEFAULT '-1',			\
-			mp5sd int(4) NOT NULL DEFAULT '0', 								\
+			mp5sd int(4) NOT NULL DEFAULT '-1', 								\
 			mp5sd_float decimal(3,2) NOT NULL DEFAULT '0.0',				\
-			mp5sd_trak int(1) NOT NULL DEFAULT '0', 						\
+			mp5sd_trak int(1) NOT NULL DEFAULT '1', 						\
 			mp5sd_trak_count int(10) NOT NULL DEFAULT '0',					\
 			mp5sd_tag varchar(128) NOT NULL DEFAULT '',						\
 			mp5sd_seed int(10) NOT NULL DEFAULT '-1',						\
-			knife_css int(4) NOT NULL DEFAULT '0', 							\
+			knife_css int(4) NOT NULL DEFAULT '-1', 							\
 			knife_css_float decimal(3,2) NOT NULL DEFAULT '0.0',			\
-			knife_css_trak int(1) NOT NULL DEFAULT '0', 					\
+			knife_css_trak int(1) NOT NULL DEFAULT '1', 					\
 			knife_css_trak_count int(10) NOT NULL DEFAULT '0', 				\
 			knife_css_tag varchar(128) NOT NULL DEFAULT '', 				\
 			knife_css_seed int(10) NOT NULL DEFAULT '-1',					\
-			knife_cord int(4) NOT NULL DEFAULT '0', 						\
+			knife_cord int(4) NOT NULL DEFAULT '-1', 						\
 			knife_cord_float decimal(3,2) NOT NULL DEFAULT '0.0',			\
-			knife_cord_trak int(1) NOT NULL DEFAULT '0', 					\
+			knife_cord_trak int(1) NOT NULL DEFAULT '1', 					\
 			knife_cord_trak_count int(10) NOT NULL DEFAULT '0', 			\
 			knife_cord_tag varchar(128) NOT NULL DEFAULT '', ");
   index += FormatEx(createQuery[index], sizeof(createQuery) - index, "	\
 			knife_cord_seed int(10) NOT NULL DEFAULT '-1',					\
-			knife_canis int(4) NOT NULL DEFAULT '0', 						\
+			knife_canis int(4) NOT NULL DEFAULT '-1', 						\
 			knife_canis_float decimal(3,2) NOT NULL DEFAULT '0.0',			\
-			knife_canis_trak int(1) NOT NULL DEFAULT '0', 					\
+			knife_canis_trak int(1) NOT NULL DEFAULT '1', 					\
 			knife_canis_trak_count int(10) NOT NULL DEFAULT '0', 			\
 			knife_canis_tag varchar(128) NOT NULL DEFAULT '', 				\
 			knife_canis_seed int(10) NOT NULL DEFAULT '-1',					\
-			knife_outdoor int(4) NOT NULL DEFAULT '0', 						\
+			knife_outdoor int(4) NOT NULL DEFAULT '-1', 						\
 			knife_outdoor_float decimal(3,2) NOT NULL DEFAULT '0.0',		\
-			knife_outdoor_trak int(1) NOT NULL DEFAULT '0', 				\
+			knife_outdoor_trak int(1) NOT NULL DEFAULT '1', 				\
 			knife_outdoor_trak_count int(10) NOT NULL DEFAULT '0', 			\
 			knife_outdoor_tag varchar(128) NOT NULL DEFAULT '', 			\
 			knife_outdoor_seed int(10) NOT NULL DEFAULT '-1',				\
-			knife_skeleton int(4) NOT NULL DEFAULT '0', 					\
+			knife_skeleton int(4) NOT NULL DEFAULT '-1', 					\
 			knife_skeleton_float decimal(3,2) NOT NULL DEFAULT '0.0',		\
-			knife_skeleton_trak int(1) NOT NULL DEFAULT '0', 				\
+			knife_skeleton_trak int(1) NOT NULL DEFAULT '1', 				\
 			knife_skeleton_trak_count int(10) NOT NULL DEFAULT '0', 		\
 			knife_skeleton_tag varchar(128) NOT NULL DEFAULT '', 			\
 			knife_skeleton_seed int(10) NOT NULL DEFAULT '-1')");
@@ -777,7 +764,7 @@ public void T_SeedColumnCallback(Database database, DBResultSet results, const c
       db.Query(T_RenameCallback, renameQuery, mysql, DBPrio_High);
     }
   } else {
-    TryFinalizeDatabaseConnection(mysql);
+    MigrateMainTableDefaults(mysql);
   }
 }
 
@@ -794,19 +781,94 @@ public void T_SeedConfirmationCallback(Database database, DBResultSet results, c
     LogError("%s Seed column creation failed! %s", (mysql ? "MySQL" : "SQLite"), error);
   } else {
     LogMessage("Successfully created seed columns");
-    TryFinalizeDatabaseConnection(mysql);
+    MigrateMainTableDefaults(mysql);
   }
+}
+
+void AddDefaultMigrationQuery(Transaction txn, const char[] column, int defaultValue) {
+  char query[256];
+  FormatEx(query, sizeof(query), "ALTER TABLE %sweapons ALTER COLUMN %s SET DEFAULT '%d'", g_TablePrefix, column,
+           defaultValue);
+  txn.AddQuery(query);
+}
+
+void AddWeaponDefaultMigrationQueries(Transaction txn, const char[] column) {
+  AddDefaultMigrationQuery(txn, column, -1);
+
+  char trakColumn[64];
+  FormatEx(trakColumn, sizeof(trakColumn), "%s_trak", column);
+  AddDefaultMigrationQuery(txn, trakColumn, 1);
+}
+
+void MigrateMainTableDefaults(bool mysql) {
+  if (!mysql) {
+    TryFinalizeDatabaseConnection(mysql);
+    return;
+  }
+
+  char query[768];
+  int queryIndex = FormatEx(query, sizeof(query),
+                            "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '%sweapons'",
+                            g_TablePrefix);
+  queryIndex += FormatEx(query[queryIndex], sizeof(query) - queryIndex,
+                         " AND COLUMN_NAME != 'steamid' AND RIGHT(COLUMN_NAME, 6) != '_float'");
+  queryIndex += FormatEx(query[queryIndex], sizeof(query) - queryIndex,
+                         " AND RIGHT(COLUMN_NAME, 11) != '_trak_count' AND RIGHT(COLUMN_NAME, 4) != '_tag'");
+  FormatEx(query[queryIndex], sizeof(query) - queryIndex,
+           " AND RIGHT(COLUMN_NAME, 5) != '_seed' AND ((RIGHT(COLUMN_NAME, 5) = '_trak' AND COLUMN_DEFAULT <> '1') OR (RIGHT(COLUMN_NAME, 5) <> '_trak' AND COLUMN_DEFAULT <> '-1'))");
+  db.Query(T_DefaultMigrationCheckCallback, query, mysql, DBPrio_High);
+}
+
+public void T_DefaultMigrationCheckCallback(Database database, DBResultSet results, const char[] error, bool mysql) {
+  if (results == null) {
+    LogError("%s Checking weapon default values failed! %s", (mysql ? "MySQL" : "SQLite"), error);
+    TryFinalizeDatabaseConnection(mysql);
+    return;
+  }
+
+  if (results.FetchRow() && results.FetchInt(0) == 0) {
+    TryFinalizeDatabaseConnection(mysql);
+    return;
+  }
+
+  Transaction txn = new Transaction();
+  AddDefaultMigrationQuery(txn, "knife", -1);
+
+  for (int weaponIndex = 0; weaponIndex < sizeof(g_WeaponClasses); weaponIndex++) {
+    char weaponName[32];
+    RemoveWeaponPrefix(g_WeaponClasses[weaponIndex], weaponName, sizeof(weaponName));
+    AddWeaponDefaultMigrationQueries(txn, weaponName);
+  }
+
+  for (int weaponIndex = 0; weaponIndex < sizeof(g_MigrationWeapons); weaponIndex++) {
+    if (StrEqual(g_MigrationWeapons[weaponIndex], "knife_ct") || StrContains(g_MigrationWeapons[weaponIndex], "ct_") == 0) {
+      AddWeaponDefaultMigrationQueries(txn, g_MigrationWeapons[weaponIndex]);
+    }
+  }
+
+  db.Execute(txn, Txn_DefaultMigrationSuccess, Txn_DefaultMigrationFail, mysql);
+}
+
+public void Txn_DefaultMigrationSuccess(Database database, bool mysql, int numQueries, DBResultSet[] results,
+                                        any[] queryData) {
+  TryFinalizeDatabaseConnection(mysql);
+}
+
+public void Txn_DefaultMigrationFail(Database database, bool mysql, int numQueries, const char[] error, int failIndex,
+                                     any[] queryData) {
+  LogError("%s Updating weapon default values failed! %s", (mysql ? "MySQL" : "SQLite"), error);
+  TryFinalizeDatabaseConnection(mysql);
 }
 
 void AddWeaponColumns(bool mysql, const char[] weapon, bool seedColumn = true) {
   Transaction txn = new Transaction();
   char query[512];
-  Format(query, sizeof(query), "ALTER TABLE %sweapons ADD %s int(4) NOT NULL DEFAULT '0'", g_TablePrefix, weapon);
+  Format(query, sizeof(query), "ALTER TABLE %sweapons ADD %s int(4) NOT NULL DEFAULT '-1'", g_TablePrefix, weapon);
   txn.AddQuery(query);
   Format(query, sizeof(query), "ALTER TABLE %sweapons ADD %s_float decimal(3,2) NOT NULL DEFAULT '0.0'", g_TablePrefix,
          weapon);
   txn.AddQuery(query);
-  Format(query, sizeof(query), "ALTER TABLE %sweapons ADD %s_trak int(1) NOT NULL DEFAULT '0'", g_TablePrefix, weapon);
+  Format(query, sizeof(query), "ALTER TABLE %sweapons ADD %s_trak int(1) NOT NULL DEFAULT '1'", g_TablePrefix, weapon);
   txn.AddQuery(query);
   Format(query, sizeof(query), "ALTER TABLE %sweapons ADD %s_trak_count int(10) NOT NULL DEFAULT '0'", g_TablePrefix,
          weapon);

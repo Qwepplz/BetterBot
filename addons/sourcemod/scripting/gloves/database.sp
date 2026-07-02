@@ -43,15 +43,9 @@ public void T_GetPlayerDataCallback(Database database, DBResultSet results, cons
 		if (GetClientAuthId(client, AuthId_Steam2, steamid, sizeof(steamid), true))
 		{
 			char query[255];
-			FormatEx(query, sizeof(query),
-				"INSERT INTO %sgloves (steamid, t_group, t_glove, ct_group, ct_glove) VALUES ('%s', -1, -1, -1, -1)",
-				g_TablePrefix, steamid);
+			FormatEx(query, sizeof(query), "INSERT INTO %sgloves (steamid) VALUES ('%s')", g_TablePrefix, steamid);
 			db.Query(T_InsertCallback, query);
 		}
-		g_iGroup[client][CS_TEAM_T] = -1;
-		g_iGloves[client][CS_TEAM_T] = -1;
-		g_iGroup[client][CS_TEAM_CT] = -1;
-		g_iGloves[client][CS_TEAM_CT] = -1;
 		return;
 	}
 
@@ -118,19 +112,20 @@ public void SQLConnectCallback(Database database, const char[] error, any data)
 		char createQuery[1024];
 		char dbIdentifier[10];
 
-		Format(createQuery, sizeof(createQuery), "CREATE TABLE IF NOT EXISTS %sgloves (steamid varchar(32) NOT NULL PRIMARY KEY, t_group int(5) NOT NULL DEFAULT '0', t_glove int(5) NOT NULL DEFAULT '0', t_float decimal(3,2) NOT NULL DEFAULT '0.0', ct_group int(5) NOT NULL DEFAULT '0', ct_glove int(5) NOT NULL DEFAULT '0', ct_float decimal(3,2) NOT NULL DEFAULT '0.0')", g_TablePrefix);
+		Format(createQuery, sizeof(createQuery), "CREATE TABLE IF NOT EXISTS %sgloves (steamid varchar(32) NOT NULL PRIMARY KEY, t_group int(5) NOT NULL DEFAULT '-1', t_glove int(5) NOT NULL DEFAULT '-1', t_float decimal(3,2) NOT NULL DEFAULT '0.0', ct_group int(5) NOT NULL DEFAULT '-1', ct_glove int(5) NOT NULL DEFAULT '-1', ct_float decimal(3,2) NOT NULL DEFAULT '0.0')", g_TablePrefix);
 
 		db.Driver.GetIdentifier(dbIdentifier, sizeof(dbIdentifier));
-		if (StrEqual(dbIdentifier, "mysql"))
+		bool mysql = StrEqual(dbIdentifier, "mysql");
+		if (mysql)
 		{
 			Format(createQuery, sizeof(createQuery), "%s ENGINE=InnoDB CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;", createQuery);
 		}
 
-		db.Query(T_CreateTableCallback, createQuery, _, DBPrio_High);
+		db.Query(T_CreateTableCallback, createQuery, mysql, DBPrio_High);
 	}
 }
 
-public void T_CreateTableCallback(Database database, DBResultSet results, const char[] error, int client)
+public void T_CreateTableCallback(Database database, DBResultSet results, const char[] error, bool mysql)
 {
 	if (results == null)
 	{
@@ -139,6 +134,62 @@ public void T_CreateTableCallback(Database database, DBResultSet results, const 
 	}
 
 	MigrateMainTableColumns();
+	MigrateMainTableDefaults(mysql);
+}
+
+void AddGloveDefaultMigrationQuery(Transaction txn, const char[] column, int defaultValue)
+{
+	char query[256];
+	FormatEx(query, sizeof(query), "ALTER TABLE %sgloves ALTER COLUMN %s SET DEFAULT '%d'", g_TablePrefix, column, defaultValue);
+	txn.AddQuery(query);
+}
+
+void MigrateMainTableDefaults(bool mysql)
+{
+	if (!mysql)
+	{
+		LoadConnectedClients();
+		return;
+	}
+
+	char query[512];
+	FormatEx(query, sizeof(query),
+		"SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '%sgloves' AND COLUMN_NAME IN ('t_group', 't_glove', 'ct_group', 'ct_glove') AND COLUMN_DEFAULT <> '-1'",
+		g_TablePrefix);
+	db.Query(T_DefaultMigrationCheckCallback, query, mysql, DBPrio_High);
+}
+
+public void T_DefaultMigrationCheckCallback(Database database, DBResultSet results, const char[] error, bool mysql)
+{
+	if (results == null)
+	{
+		LogError("Checking glove default values failed! %s", error);
+		LoadConnectedClients();
+		return;
+	}
+
+	if (results.FetchRow() && results.FetchInt(0) == 0)
+	{
+		LoadConnectedClients();
+		return;
+	}
+
+	Transaction txn = new Transaction();
+	AddGloveDefaultMigrationQuery(txn, "t_group", -1);
+	AddGloveDefaultMigrationQuery(txn, "t_glove", -1);
+	AddGloveDefaultMigrationQuery(txn, "ct_group", -1);
+	AddGloveDefaultMigrationQuery(txn, "ct_glove", -1);
+	db.Execute(txn, Txn_DefaultMigrationSuccess, Txn_DefaultMigrationFail);
+}
+
+public void Txn_DefaultMigrationSuccess(Database database, any data, int numQueries, DBResultSet[] results, any[] queryData)
+{
+	LoadConnectedClients();
+}
+
+public void Txn_DefaultMigrationFail(Database database, any data, int numQueries, const char[] error, int failIndex, any[] queryData)
+{
+	LogError("Updating glove default values failed! %s", error);
 	LoadConnectedClients();
 }
 
@@ -146,11 +197,11 @@ void MigrateMainTableColumns()
 {
 	char query[255];
 	static const char columnDefs[][] = {
-		"t_group int(5) NOT NULL DEFAULT '0'",
-		"t_glove int(5) NOT NULL DEFAULT '0'",
+		"t_group int(5) NOT NULL DEFAULT '-1'",
+		"t_glove int(5) NOT NULL DEFAULT '-1'",
 		"t_float decimal(3,2) NOT NULL DEFAULT '0.0'",
-		"ct_group int(5) NOT NULL DEFAULT '0'",
-		"ct_glove int(5) NOT NULL DEFAULT '0'",
+		"ct_group int(5) NOT NULL DEFAULT '-1'",
+		"ct_glove int(5) NOT NULL DEFAULT '-1'",
 		"ct_float decimal(3,2) NOT NULL DEFAULT '0.0'"
 	};
 	for (int i = 0; i < sizeof(columnDefs); i++)
