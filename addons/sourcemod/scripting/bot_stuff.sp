@@ -12,7 +12,15 @@
 #include <PTaH>
 #include <bot_steamids>
 
+#undef REQUIRE_PLUGIN
+#include <kento_rankme/rankme>
+#define REQUIRE_PLUGIN
+
 #define TEAMMATE_COLOR_COUNT 5
+#define PROFILE_RANK_MIN 1
+#define PROFILE_RANK_MAX 40
+#define PROFILE_RANK_FIRST_MAX_POINTS 1000
+#define PROFILE_RANK_DEFAULT_MAX_POINTS 6300
 #define BOMB_GUARD_CLEAR_RADIUS 500.0
 #define RETAKE_SAVE_MONEY_THRESHOLD 3000
 #define RETAKE_SAVE_MIN_BOMB_DISTANCE 1200.0
@@ -118,6 +126,7 @@ float g_fSaveLookAtDebugTime[MAXPLAYERS+1];
 bool g_bCTSaveLocked;
 float g_fCTSaveConditionSince;
 bool g_bSaveActiveCache[MAXPLAYERS+1];
+bool g_bProfileRanksDirty;
 int g_iProfileRank[MAXPLAYERS+1], g_iPlayerColor[MAXPLAYERS+1], g_iTarget[MAXPLAYERS+1], g_iPrevTarget[MAXPLAYERS+1], g_iDoingSmokeNum[MAXPLAYERS+1], g_iActiveWeapon[MAXPLAYERS+1];
 int g_iCurrentRound, g_iRoundsPlayed, g_iCTScore, g_iTScore;
 int g_iProfileRankOffset, g_iPlayerColorOffset;
@@ -423,6 +432,7 @@ public void OnPluginStart()
     HookEventEx("round_start", OnRoundStart);
     HookEventEx("round_end", OnRoundEnd);
     HookEventEx("round_freeze_end", OnFreezetimeEnd);
+	HookEventEx("cs_win_panel_match", OnMatchWinPanel);
 
     HookEventEx("player_spawn", OnPlayerSpawn);
     HookEventEx("player_death", OnPlayerDeath);
@@ -1128,7 +1138,7 @@ public void OnClientPostAdminCheck(int iClient)
 
 void InitializeClientProfileData(int iClient)
 {
-    g_iProfileRank[iClient] = Math_GetRandomInt(1, 40);
+    SetProfileRank(iClient, PROFILE_RANK_MIN);
 
     if (!IsFakeClient(iClient))
         return;
@@ -1160,6 +1170,62 @@ void InitializeClientProfileData(int iClient)
     g_bUseM4A1S[iClient] = IsItMyChance(50.0);
     g_bUseCZ75[iClient] = IsItMyChance(20.0);
     g_pCurrArea[iClient] = INVALID_NAV_AREA;
+}
+
+void SetProfileRank(int iClient, int iRank)
+{
+	if (g_iProfileRank[iClient] == iRank)
+		return;
+
+	g_iProfileRank[iClient] = iRank;
+	g_bProfileRanksDirty = true;
+}
+
+int GetProfileRankMaxPoints()
+{
+	ConVar hMaxRankPoints = FindConVar("ranks_matchmaking_point_ge");
+	if (hMaxRankPoints == null || hMaxRankPoints.IntValue <= PROFILE_RANK_FIRST_MAX_POINTS)
+		return PROFILE_RANK_DEFAULT_MAX_POINTS;
+
+	return hMaxRankPoints.IntValue;
+}
+
+int GetProfileRankFromRankMePoints(int iPoints)
+{
+	if (iPoints <= PROFILE_RANK_FIRST_MAX_POINTS)
+		return PROFILE_RANK_MIN;
+
+	int iMaxPoints = GetProfileRankMaxPoints();
+	if (iPoints >= iMaxPoints)
+		return PROFILE_RANK_MAX;
+
+	return 2 + ((iPoints - PROFILE_RANK_FIRST_MAX_POINTS - 1) * (PROFILE_RANK_MAX - 2)) / (iMaxPoints - PROFILE_RANK_FIRST_MAX_POINTS - 1);
+}
+
+void RefreshProfileRankFromRankMe(int iClient)
+{
+	if (!IsValidClient(iClient) || !LibraryExists("rankme"))
+		return;
+
+	SetProfileRank(iClient, GetProfileRankFromRankMePoints(RankMe_GetPoints(iClient)));
+}
+
+public Action RankMe_OnPlayerLoaded(int iClient)
+{
+	RefreshProfileRankFromRankMe(iClient);
+	return Plugin_Continue;
+}
+
+public Action OnMatchWinPanel(Event eEvent, const char[] szName, bool bDontBroadcast)
+{
+	RequestFrame(Frame_RefreshProfileRanksFromRankMe);
+	return Plugin_Continue;
+}
+
+void Frame_RefreshProfileRanksFromRankMe(any iData)
+{
+	for (int iClient = 1; iClient <= MaxClients; iClient++)
+		RefreshProfileRankFromRankMe(iClient);
 }
 
 public void OnRoundPreStart(Event eEvent, const char[] szName, bool bDontBroadcast)
@@ -1526,7 +1592,10 @@ public void OnWeaponFire(Event eEvent, const char[] szName, bool bDontBroadcast)
 public void OnThinkPost(int iEnt)
 {
 	if (g_iProfileRankOffset != -1)
-		SetEntDataArray(iEnt, g_iProfileRankOffset, g_iProfileRank, MAXPLAYERS + 1);
+	{
+		SetEntDataArray(iEnt, g_iProfileRankOffset, g_iProfileRank, MAXPLAYERS + 1, 4, g_bProfileRanksDirty);
+		g_bProfileRanksDirty = false;
+	}
 
 	if (g_iPlayerColorOffset != -1)
 		SetEntDataArray(iEnt, g_iPlayerColorOffset, g_iPlayerColor, MAXPLAYERS + 1);
@@ -2435,7 +2504,7 @@ public void BotMimic_OnPlayerStopsMimicing(int iClient, char[] szName, char[] sz
 
 public void OnClientDisconnect(int iClient)
 {
-	g_iProfileRank[iClient] = 0;
+	SetProfileRank(iClient, 0);
 	g_iPlayerColor[iClient] = -1;
 	g_bIsProBot[iClient] = false;
 	g_fAttackDebugTime[iClient] = 0.0;
