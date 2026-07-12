@@ -15,11 +15,6 @@
 		"chi"		"{GREEN}[RankMe]"
 	}
 
-	"ResetMyRank"
-	{
-		"chi"		"{RED}你的排名已经重置"
-	}
-	
 	"BombPickup"
 	{
 		"#format"	"{1:s},{2:d},{3:d}"
@@ -327,16 +322,6 @@
 		"chi"		"{PINK}{1}{PURPLE} ({2}) {LIGHTGREEN}获得 {3} 点{NORMAL}, 因为{GREEN}协助闪光{PINK}{4}{NORMAL}击杀{PINK}{5}{NORMAL}."
 	}
 	
-	"The rank has been reset"
-	{
-		"chi"		"{RED}已重置排名资料"
-	}
-	
-	"All rank data has been reset"
-	{
-		"chi"		"{RED}已重置所有排名资料"
-	}
-	
 	"Usagepurge"
 	{
 		"chi"		"{RED}请使用: {PINK}rankpurge X (X 代表未上线天数)"
@@ -638,11 +623,6 @@
 		"chi"		"我的排名"
 	}
 	
-	"Reset My Rank"
-	{
-		"chi"		"重置我的排名"
-	}
-	
 	"My Stats"
 	{
 		"chi"		"我的统计资料"
@@ -741,16 +721,6 @@
 	"TOP Points"
 	{
 		"chi"		"分数排名"
-	}
-	
-	"Reset a player rank"
-	{
-		"chi"		"重置玩家排名"
-	}
-	
-	"Reset all the rank"
-	{
-		"chi"		"重置所有玩家排名"
 	}
 	
 	"MVPs"

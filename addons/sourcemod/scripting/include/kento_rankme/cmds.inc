@@ -49,67 +49,6 @@ stock void Entity_GetAbsOrigin(int entity, float vec[3])
 	GetEntPropVector(entity, Prop_Send, "m_vecOrigin", vec);
 }
 
-public Action CMD_ResetRank(int client, int args){
-	if(!g_bEnabled || client == 0 || !IsClientInGame(client))
-		return Plugin_Handled;
-	char arg1[64];
-	GetCmdArg(1,arg1,sizeof(arg1));
-	char sEscapeArg1[129];
-	SQL_EscapeString(g_hStatsDb,arg1,sEscapeArg1,sizeof(sEscapeArg1));
-	//ReplaceString(arg1,sizeof(arg1)," ","");
-	//ReplaceString(arg1,sizeof(arg1),"\"","");
-	char query[2000];
-	if(g_RankBy == 1){
-		Format(query,sizeof(query),"DELETE FROM `%s` WHERE name='%s'",g_sSQLTable,sEscapeArg1);
-	} else if (g_RankBy == 0){
-		Format(query,sizeof(query),"DELETE FROM `%s` WHERE steam='%s'",g_sSQLTable,sEscapeArg1);
-	} else if (g_RankBy == 2){
-		Format(query,sizeof(query),"DELETE FROM `%s` WHERE lastip='%s'",g_sSQLTable,sEscapeArg1);
-	}
-	SQL_TQuery(g_hStatsDb,SQL_NothingCallback,query);
-	LogAction(client,-1,"[RankMe]: Rank has been reset (%s)",arg1);
-	char auth[64];
-	char name[MAX_NAME_LENGTH];
-	char ip[64];
-	for(int i=1;i<=MaxClients;i++){
-		if(IsClientInGame(i)){		
-			if(g_RankBy == 1){
-				GetClientName(i,name,sizeof(name));				
-				if(StrEqual(name,arg1,false))
-					OnClientPutInServer(i);			
-			} else if(g_RankBy == 0){
-				GetClientAuthId(i,AuthId_Steam2,auth,sizeof(auth));	
-				if(StrEqual(auth,arg1,false))
-					OnClientPutInServer(i);
-			} else if(g_RankBy == 2){			
-				GetClientIP(i,ip,sizeof(ip));				
-				if(StrEqual(ip,arg1,false))
-					OnClientPutInServer(i);
-			}
-		}
-	}
-	CPrintToChat(client, "%s %T", MSG, "The rank has been reset",client);
-	return Plugin_Handled;
-}
-
-public Action CMD_ResetRankAll(int client, int args){
-	if(!g_bEnabled || client == 0 || !IsClientInGame(client))
-		return Plugin_Handled;
-		
-	char query[2000];
-	Format(query,sizeof(query),"DELETE FROM `%s` WHERE 1=1",g_sSQLTable);
-	SQL_TQuery(g_hStatsDb,SQL_NothingCallback,query);
-	
-	LogAction(client,-1,"[RankMe]: All rank data has been reset");
-	
-	for(int i=1;i<=MaxClients;i++){
-		if(IsClientInGame(i))
-			OnClientPutInServer(i);
-	}
-	CPrintToChat(client, "%s %T", MSG, "All rank data has been reset",client);
-	return Plugin_Handled;
-}
-
 public Action CMD_Purge(int client, int args){
 	if(!g_bEnabled || client == 0 || !IsClientInGame(client))
 		return Plugin_Handled;
@@ -1847,28 +1786,6 @@ public void SQL_NextCallback(Handle owner, Handle hndl, const char[] error, any 
 	CloseHandle(panel);
 }
 
-public Action CMD_ResetOwnRank(int client, int args){
-
-	if(!g_bEnabled || !g_bResetOwnRank || client == 0 || !IsClientInGame(client))
-		return Plugin_Handled;
-	char query[2000];
-	int identityMode = GetRankMeIdentityMode(client);
-	if(identityMode == 1){
-		char sEscape[MAX_NAME_LENGTH*2+1];
-		SQL_EscapeString(g_hStatsDb,g_aClientName[client],sEscape,sizeof(sEscape));
-		Format(query,sizeof(query),"DELETE FROM `%s` WHERE name='%s'",g_sSQLTable,sEscape);
-	} else if(identityMode == 0){
-		Format(query,sizeof(query),"DELETE FROM `%s` WHERE steam='%s'",g_sSQLTable,g_aClientSteam[client]);
-	} else if(identityMode == 2){
-		Format(query,sizeof(query),"DELETE FROM `%s` WHERE lastip='%s'",g_sSQLTable,g_aClientIp[client]);
-	}
-	SQL_TQuery(g_hStatsDb,SQL_NothingCallback,query);
-	LogAction(client,-1,"[RankMe]: Reseted own rank (%s - %s - %s)",g_aClientName[client],g_aClientSteam[client],g_aClientIp[client]);
-	OnClientPutInServer(client);
-	CPrintToChat(client,"%s %T",MSG,"ResetMyRank", client);
-	return Plugin_Handled;
-}
-
 public float IntToFloat(int integer){
 	char s[300];
 	IntToString(integer,s,sizeof(s));
@@ -1893,12 +1810,6 @@ public Action CMD_RankMe(int client, int args){
 	
 	Format(temp, sizeof(temp), "%T", "My Rank", client);
 	hMenu.AddItem("rank", temp);
-	
-	if(g_bResetOwnRank)
-	{
-		Format(temp, sizeof(temp), "%T", "Reset My Rank", client);
-		hMenu.AddItem("resetmyrank", temp);
-	}
 	
 	Format(temp, sizeof(temp), "%T", "My Stats", client);
 	hMenu.AddItem("statsme", temp);
@@ -1975,17 +1886,6 @@ public Action CMD_RankMe(int client, int args){
 	Format(temp, sizeof(temp), "%T", "TOP Wallbang", client);
 	hMenu.AddItem("topwall", temp);
 	
-	if(CheckCommandAccess(client, "sm_resetrank", ADMFLAG_ROOT))
-	{
-		Format(temp, sizeof(temp), "%T", "Reset a player rank", client);
-		hMenu.AddItem("resetrank", temp);
-	}	
-	if(CheckCommandAccess(client, "sm_resetrank_all", ADMFLAG_ROOT))
-	{
-		Format(temp, sizeof(temp), "%T", "Reset all the rank", client);
-		hMenu.AddItem("resetrankall", temp);
-	}
-	
 	hMenu.Display(client,MENU_TIME_FOREVER);
 
 	return Plugin_Handled;
@@ -2001,9 +1901,6 @@ public int MenuHandler_RankMe(Menu menu, MenuAction action, int client, int para
 		
 		if(StrEqual(temp,"rank"))
 			CMD_Rank(client,0);
-		
-		else if(StrEqual(temp,"resetmyrank"))
-			CMD_ResetOwnRank(client,0);
 		
 		else if(StrEqual(temp,"statsme"))
 			CMD_StatsMe(client,0);
@@ -2077,13 +1974,6 @@ public int MenuHandler_RankMe(Menu menu, MenuAction action, int client, int para
 		else if(StrEqual(temp,"topwall"))
 			ShowTOPWall(client,0);
 			
-		else if(StrEqual(temp,"resetrank")){
-			
-			Menu hMenu = CreateMenu(MenuHandler_TargetResetRank);
-			AddTargetsToMenu2(hMenu,0,COMMAND_FILTER_NO_BOTS);
-			
-			hMenu.Display(client,MENU_TIME_FOREVER);
-		}
 		else if(StrEqual(temp,"statsme2")){
 			
 			Menu hMenu = CreateMenu(MenuHandler_TargetStatsMe2);
@@ -2092,40 +1982,6 @@ public int MenuHandler_RankMe(Menu menu, MenuAction action, int client, int para
 			hMenu.Display(client,MENU_TIME_FOREVER);
 		}
 		
-		else if(StrEqual(temp,"resetrankall"))
-			CMD_ResetRankAll(client,0);
-		
-		
-	}
-	if (action == MenuAction_End)
-	{
-		delete menu;
-	}
-	
-
-	return 0;
-}
-
-public int MenuHandler_TargetResetRank(Menu menu, MenuAction action, int client, int param2){
-	
-	if (action == MenuAction_Select)
-	{
-		char temp[250];
-	
-		menu.GetItem(param2, temp, sizeof(temp));
-		int target = GetClientOfUserId(StringToInt(temp));
-		int identityMode = GetRankMeIdentityMode(target);
-		
-		if(identityMode == 1){
-			
-			ClientCommand(client,"sm_resetrank \"%s\"",g_aClientName[target]);
-		} else if(identityMode == 0){
-			
-			ClientCommand(client,"sm_resetrank \"%s\"",g_aClientSteam[target]);
-		} else if(identityMode == 2){
-			
-			ClientCommand(client,"sm_resetrank \"%s\"",g_aClientIp[target]);
-		}
 	}
 	if (action == MenuAction_End)
 	{

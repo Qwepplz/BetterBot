@@ -15,11 +15,6 @@
 		"en"		"{GREEN}[RankMe]"
 	}
 
-	"ResetMyRank"
-	{
-		"en"		"{RED}Your rank has been reset."
-	}
-
 	"BombPickup"
 	{
 		"#format"	"{1:s},{2:d},{3:d}"
@@ -310,16 +305,6 @@
 	{
 		"#format"	"{1:s},{2:d},{3:d},{4:s},{5:s}"
 		"en"		"{PINK}{1}{PURPLE} ({2}) {RED}lost {3} point {NORMAL}for {RED}Assist {PINK}{4} {RED}to Flash teammate {PINK}{5}{NORMAL}."
-	}
-
-	"The rank has been reset"
-	{
-		"en"		"{RED}The rank has been reset."
-	}
-
-	"All rank data has been reset"
-	{
-		"en"		"{RED}All rank data has been reset."
 	}
 
 	"Usagepurge"
@@ -624,11 +609,6 @@
 		"en"		"My Rank"
 	}
 
-	"Reset My Rank"
-	{
-		"en"		"Reset My Rank"
-	}
-
 	"My Stats"
 	{
 		"en"		"My Stats"
@@ -727,16 +707,6 @@
 	"TOP Points"
 	{
 		"en"		"TOP Points"
-	}
-
-	"Reset a player rank"
-	{
-		"en"		"Reset a player rank"
-	}
-
-	"Reset all the rank"
-	{
-		"en"		"Reset All The Rank"
 	}
 
 	"MVPs"

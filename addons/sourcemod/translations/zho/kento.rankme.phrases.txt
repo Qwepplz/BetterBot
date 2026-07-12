@@ -15,11 +15,6 @@
 		"zho"		"{GREEN}[RankMe]"
 	}
 
-	"ResetMyRank"
-	{
-		"zho"		"{RED}你的排名已經重置"
-	}
-	
 	"BombPickup"
 	{
 		"#format"	"{1:s},{2:d},{3:d}"
@@ -310,16 +305,6 @@
 	{
 		"#format"	"{1:s},{2:d},{3:d},{4:s}"
 		"zho"		"{PINK}{1}{PURPLE} ({2}) {RED}失去 {3} 點{NORMAL}, 因為{RED}協助團隊擊殺{PINK}{4}{NORMAL}."
-	}
-	
-	"The rank has been reset"
-	{
-		"zho"		"{RED}已重置排名資料"
-	}
-	
-	"All rank data has been reset"
-	{
-		"zho"		"{RED}已重置所有排名資料"
 	}
 	
 	"Usagepurge"
@@ -623,11 +608,6 @@
 		"zho"		"我的排名"
 	}
 	
-	"Reset My Rank"
-	{
-		"zho"		"重置我的排名"
-	}
-	
 	"My Stats"
 	{
 		"zho"		"我的統計資料"
@@ -728,16 +708,6 @@
 		"zho"		"積分排名"
 	}
 
-	"Reset a player rank"
-	{
-		"zho"		"重置玩家排名"
-	}
-	
-	"Reset all the rank"
-	{
-		"zho"		"重置所有玩家排名"
-	}
-	
 	"MVPs"
 	{
 		"zho"		"MVPs"
