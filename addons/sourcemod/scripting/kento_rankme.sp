@@ -42,12 +42,10 @@ static const char g_sSqliteCreate[] = "CREATE TABLE IF NOT EXISTS `%s` (id INTEG
 static const char g_sMysqlCreate[] = "CREATE TABLE IF NOT EXISTS `%s` (id INTEGER PRIMARY KEY, steam TEXT, name TEXT, lastip TEXT, score NUMERIC, kills NUMERIC, deaths NUMERIC, assists NUMERIC, suicides NUMERIC, tk NUMERIC, shots NUMERIC, hits NUMERIC, headshots NUMERIC, connected NUMERIC, rounds_tr NUMERIC, rounds_ct NUMERIC, lastconnect NUMERIC,knife NUMERIC,glock NUMERIC,hkp2000 NUMERIC,usp_silencer NUMERIC,p250 NUMERIC,deagle NUMERIC,elite NUMERIC,fiveseven NUMERIC,tec9 NUMERIC,cz75a NUMERIC,revolver NUMERIC,nova NUMERIC,xm1014 NUMERIC,mag7 NUMERIC,sawedoff NUMERIC,bizon NUMERIC,mac10 NUMERIC,mp9 NUMERIC,mp7 NUMERIC,ump45 NUMERIC,p90 NUMERIC,galilar NUMERIC,ak47 NUMERIC,scar20 NUMERIC,famas NUMERIC,m4a1 NUMERIC,m4a1_silencer NUMERIC,aug NUMERIC,ssg08 NUMERIC,sg556 NUMERIC,awp NUMERIC,g3sg1 NUMERIC,m249 NUMERIC,negev NUMERIC,hegrenade NUMERIC,flashbang NUMERIC,smokegrenade NUMERIC,inferno NUMERIC,decoy NUMERIC,taser NUMERIC,mp5sd NUMERIC,breachcharge NUMERIC,head NUMERIC, chest NUMERIC, stomach NUMERIC, left_arm NUMERIC, right_arm NUMERIC, left_leg NUMERIC, right_leg NUMERIC,c4_planted NUMERIC,c4_exploded NUMERIC,c4_defused NUMERIC,ct_win NUMERIC, tr_win NUMERIC, hostages_rescued NUMERIC, vip_killed NUMERIC, vip_escaped NUMERIC, vip_played NUMERIC, mvp NUMERIC, damage NUMERIC, match_win NUMERIC, match_draw NUMERIC, match_lose NUMERIC, first_blood NUMERIC, no_scope NUMERIC, no_scope_dis NUMERIC, thru_smoke NUMERIC, blind NUMERIC, assist_flash NUMERIC, assist_team_flash NUMERIC, assist_team_kill NUMERIC, wallbang NUMERIC) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci";
 static const char g_sSqlInsert[] = "INSERT INTO `%s` VALUES (NULL,'%s','%s','%s','%d','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0');";
 
-static const char g_sSqlSaveBase[] = "UPDATE `%s` SET score = '%i', kills = '%i', deaths='%i', assists='%i',suicides='%i',tk='%i',shots='%i',hits='%i',headshots='%i', rounds_tr = '%i', rounds_ct = '%i',lastip='%s',name='%s'%s,head='%i',chest='%i', stomach='%i',left_arm='%i',right_arm='%i',left_leg='%i',right_leg='%i' WHERE %s = '%s';";
-static const char g_sSqlSave2Base[] = "UPDATE `%s` SET c4_planted='%i',c4_exploded='%i',c4_defused='%i',ct_win='%i',tr_win='%i', hostages_rescued='%i',vip_killed = '%d',vip_escaped = '%d',vip_played = '%d', mvp='%i', damage='%i', match_win='%i', match_draw='%i', match_lose='%i', first_blood='%i', no_scope='%i', no_scope_dis='%i', thru_smoke='%i', blind='%i', assist_flash='%i', assist_team_flash='%i', assist_team_kill='%i', wallbang='%i', lastconnect='%i', connected='%i' WHERE %s = '%s';";
+static const char g_sSqlSaveBase[] = "UPDATE `%s` SET score = '%i', kills = '%i', deaths='%i', assists='%i',suicides='%i',tk='%i',shots='%i',hits='%i',headshots='%i', rounds_tr = '%i', rounds_ct = '%i',lastip='%s',name='%s'%s,head='%i',chest='%i', stomach='%i',left_arm='%i',right_arm='%i',left_leg='%i',right_leg='%i' WHERE %s;";
+static const char g_sSqlSave2Base[] = "UPDATE `%s` SET c4_planted='%i',c4_exploded='%i',c4_defused='%i',ct_win='%i',tr_win='%i', hostages_rescued='%i',vip_killed = '%d',vip_escaped = '%d',vip_played = '%d', mvp='%i', damage='%i', match_win='%i', match_draw='%i', match_lose='%i', first_blood='%i', no_scope='%i', no_scope_dis='%i', thru_smoke='%i', blind='%i', assist_flash='%i', assist_team_flash='%i', assist_team_kill='%i', wallbang='%i', lastconnect='%i', connected='%i' WHERE %s;";
 
-static const char g_sSqlRetrieveClient[] = "SELECT * FROM `%s` WHERE steam='%s';";
-static const char g_sSqlRetrieveClientName[] = "SELECT * FROM `%s` WHERE name='%s';";
-static const char g_sSqlRetrieveClientIp[] = "SELECT * FROM `%s` WHERE lastip='%s';";
+static const char g_sSqlRetrieveClient[] = "SELECT * FROM `%s` WHERE %s;";
 static const char g_sSqlRemoveDuplicateSQLite[] = "delete from `%s` where `%s`.id > (SELECT min(id) from `%s` as t2 WHERE t2.steam=`%s`.steam);";
 static const char g_sSqlRemoveDuplicateNameSQLite[] = "delete from `%s` where `%s`.id > (SELECT min(id) from `%s` as t2 WHERE t2.name=`%s`.name);";
 static const char g_sSqlRemoveDuplicateIpSQLite[] = "delete from `%s` where `%s`.id > (SELECT min(id) from `%s` as t2 WHERE t2.lastip=`%s`.lastip);";
@@ -122,14 +120,54 @@ int GetRankMeIdentityMode(int client)
 	return g_RankBy;
 }
 
+void BuildRankMeIdentityWhere(int client, char[] where, int whereSize)
+{
+	bool isBot = IsRankMeBotIdentity(client);
+	if (isBot || g_RankBy == 1) {
+		char escapedName[MAX_NAME_LENGTH * 2 + 1];
+		SQL_EscapeString(g_hStatsDb, g_aClientName[client], escapedName, sizeof(escapedName));
+		if (isBot)
+			FormatEx(where, whereSize, "steam = 'BOT' AND name = '%s'", escapedName);
+		else
+			FormatEx(where, whereSize, "name = '%s'", escapedName);
+	} else if (g_RankBy == 2) {
+		FormatEx(where, whereSize, "lastip = '%s'", g_aClientIp[client]);
+	} else {
+		FormatEx(where, whereSize, "steam = '%s'", g_aClientSteam[client]);
+	}
+}
+
 bool IsRankMeIdentityMatch(int client, const char[] steam, const char[] name, const char[] ip)
 {
-	int identityMode = GetRankMeIdentityMode(client);
-	if (identityMode == 1)
+	if (IsRankMeBotIdentity(client))
+		return StrEqual(steam, "BOT", false) && StrEqual(name, g_aClientName[client], false);
+
+	if (g_RankBy == 1)
 		return StrEqual(name, g_aClientName[client], false);
-	if (identityMode == 2)
+	if (g_RankBy == 2)
 		return StrEqual(ip, g_aClientIp[client], false);
 	return StrEqual(steam, g_aClientSteam[client], false);
+}
+
+int FindRankMeCachedIdentity(int client)
+{
+	if (IsRankMeBotIdentity(client)) {
+		char steam[32], name[128];
+		int rankCount = GetArraySize(g_arrayRankCache[0]);
+		for (int rank = 1; rank < rankCount; rank++) {
+			GetArrayString(g_arrayRankCache[0], rank, steam, sizeof(steam));
+			GetArrayString(g_arrayRankCache[1], rank, name, sizeof(name));
+			if (IsRankMeIdentityMatch(client, steam, name, ""))
+				return rank;
+		}
+		return -1;
+	}
+
+	if (g_RankBy == 1)
+		return FindStringInArray(g_arrayRankCache[1], g_aClientName[client]);
+	if (g_RankBy == 2)
+		return FindStringInArray(g_arrayRankCache[2], g_aClientIp[client]);
+	return FindStringInArray(g_arrayRankCache[0], g_aClientSteam[client]);
 }
 
 void ClearRankMeIdentity(int client)
@@ -466,8 +504,6 @@ public void OnClientChangeName(Handle event, const char[] name, bool dontBroadca
 		GetEventString(event, "newname", clientnewname, sizeof(clientnewname));
 		if (client == g_C4PlantedBy)
 			strcopy(g_sC4PlantedByName, sizeof(g_sC4PlantedByName), clientnewname);
-		char Eclientnewname[MAX_NAME_LENGTH * 2 + 1];
-		SQL_EscapeString(g_hStatsDb, clientnewname, Eclientnewname, sizeof(Eclientnewname));
 
 		char query[10000];
 		int identityMode = GetRankMeIdentityMode(client);
@@ -481,7 +517,9 @@ public void OnClientChangeName(Handle event, const char[] name, bool dontBroadca
 			
 			strcopy(g_aClientName[client], MAX_NAME_LENGTH, clientnewname);
 			
-			Format(query, sizeof(query), g_sSqlRetrieveClientName, g_sSQLTable, Eclientnewname);
+			char identityWhere[MAX_NAME_LENGTH * 2 + 32];
+			BuildRankMeIdentityWhere(client, identityWhere, sizeof(identityWhere));
+			Format(query, sizeof(query), g_sSqlRetrieveClient, g_sSQLTable, identityWhere);
 			if (DEBUGGING) {
 				PrintToServer(query);
 				LogError("%s", query);
@@ -489,11 +527,12 @@ public void OnClientChangeName(Handle event, const char[] name, bool dontBroadca
 			SQL_TQuery(g_hStatsDb, SQL_LoadPlayerCallback, query, client);
 			
 		} else {
-			
+			char escapedName[MAX_NAME_LENGTH * 2 + 1];
+			SQL_EscapeString(g_hStatsDb, clientnewname, escapedName, sizeof(escapedName));
 			if (identityMode == 0)
-				Format(query, sizeof(query), "UPDATE `%s` SET name='%s' WHERE steam = '%s';", g_sSQLTable, Eclientnewname, g_aClientSteam[client]);
+				Format(query, sizeof(query), "UPDATE `%s` SET name='%s' WHERE steam = '%s';", g_sSQLTable, escapedName, g_aClientSteam[client]);
 			else
-				Format(query, sizeof(query), "UPDATE `%s` SET name='%s' WHERE lastip = '%s';", g_sSQLTable, Eclientnewname, g_aClientIp[client]);
+				Format(query, sizeof(query), "UPDATE `%s` SET name='%s' WHERE lastip = '%s';", g_sSQLTable, escapedName, g_aClientIp[client]);
 			
 			SQL_TQuery(g_hStatsDb, SQL_NothingCallback, query);
 		}
@@ -526,23 +565,6 @@ void ApplyScoreLoss(int client, int loss)
 	}
 }
 
-void GetClientWhereInfo(int client, char[] field, int fieldSize, char[] value, int valueSize)
-{
-	int identityMode = GetRankMeIdentityMode(client);
-	if (identityMode == 1) {
-		strcopy(field, fieldSize, "name");
-		char sEscapeName[MAX_NAME_LENGTH * 2 + 1];
-		SQL_EscapeString(g_hStatsDb, g_aClientName[client], sEscapeName, sizeof(sEscapeName));
-		strcopy(value, valueSize, sEscapeName);
-	} else if (identityMode == 2) {
-		strcopy(field, fieldSize, "lastip");
-		strcopy(value, valueSize, g_aClientIp[client]);
-	} else {
-		strcopy(field, fieldSize, "steam");
-		strcopy(value, valueSize, g_aClientSteam[client]);
-	}
-}
-
 void BuildSaveQueries(int client, char[] query, int qSize, char[] query2, int q2Size)
 {
 	char sEscapeName[MAX_NAME_LENGTH * 2 + 1];
@@ -555,13 +577,13 @@ void BuildSaveQueries(int client, char[] query, int qSize, char[] query2, int q2
 		Format(weapons_query, sizeof(weapons_query), "%s,%s='%d'", weapons_query, g_sWeaponsNamesGame[i], weapon_array[i]);
 	}
 
-	char whereField[16], whereValue[MAX_NAME_LENGTH * 2 + 1];
-	GetClientWhereInfo(client, whereField, sizeof(whereField), whereValue, sizeof(whereValue));
+	char identityWhere[MAX_NAME_LENGTH * 2 + 32];
+	BuildRankMeIdentityWhere(client, identityWhere, sizeof(identityWhere));
 
 	Format(query, qSize, g_sSqlSaveBase, g_sSQLTable, g_aStats[client].SCORE, g_aStats[client].KILLS, g_aStats[client].DEATHS, g_aStats[client].ASSISTS, g_aStats[client].SUICIDES, g_aStats[client].TK,
 		g_aStats[client].SHOTS, g_aStats[client].HITS, g_aStats[client].HEADSHOTS, g_aStats[client].ROUNDS_TR, g_aStats[client].ROUNDS_CT, g_aClientIp[client], sEscapeName, weapons_query,
 		g_aHitBox[client].HEAD, g_aHitBox[client].CHEST, g_aHitBox[client].STOMACH, g_aHitBox[client].LEFT_ARM, g_aHitBox[client].RIGHT_ARM, g_aHitBox[client].LEFT_LEG, g_aHitBox[client].RIGHT_LEG,
-		whereField, whereValue);
+		identityWhere);
 
 	Format(query2, q2Size, g_sSqlSave2Base, g_sSQLTable, g_aStats[client].C4_PLANTED, g_aStats[client].C4_EXPLODED, g_aStats[client].C4_DEFUSED, g_aStats[client].CT_WIN, g_aStats[client].TR_WIN,
 		g_aStats[client].HOSTAGES_RESCUED, g_aStats[client].VIP_KILLED, g_aStats[client].VIP_ESCAPED, g_aStats[client].VIP_PLAYED, g_aStats[client].MVP, g_aStats[client].DAMAGE,
@@ -569,7 +591,7 @@ void BuildSaveQueries(int client, char[] query, int qSize, char[] query2, int q2
 		g_aStats[client].FB, g_aStats[client].NS, g_aStats[client].NSD,
 		g_aStats[client].SMOKE, g_aStats[client].BLIND, g_aStats[client].AF, g_aStats[client].ATF, g_aStats[client].ATK, g_aStats[client].WALL,
 		GetTime(), g_aStats[client].CONNECTED + GetTime() - g_aSession[client].CONNECTED,
-		whereField, whereValue);
+		identityWhere);
 }
 
 void ResetPlayerCombatData(int client) {
@@ -1794,22 +1816,19 @@ public void LoadPlayer(int client) {
 	char name[MAX_NAME_LENGTH];
 	GetClientName(client, name, sizeof(name));
 	strcopy(g_aClientName[client], MAX_NAME_LENGTH, name);
-	char sEscapeName[MAX_NAME_LENGTH * 2 + 1];
-	SQL_EscapeString(g_hStatsDb, name, sEscapeName, sizeof(sEscapeName));
 	char auth[32];
-	GetClientAuthId(client, AuthId_Steam2, auth, sizeof(auth));
+	if (IsRankMeBotIdentity(client))
+		strcopy(auth, sizeof(auth), "BOT");
+	else
+		GetClientAuthId(client, AuthId_Steam2, auth, sizeof(auth));
 	strcopy(g_aClientSteam[client], sizeof(g_aClientSteam[]), auth);
 	char ip[32];
 	GetClientIP(client, ip, sizeof(ip));
 	strcopy(g_aClientIp[client], sizeof(g_aClientIp[]), ip);
 	char query[10000];
-	int identityMode = GetRankMeIdentityMode(client);
-	if (identityMode == 1)
-		FormatEx(query, sizeof(query), g_sSqlRetrieveClientName, g_sSQLTable, sEscapeName);
-	else if (identityMode == 0)
-		FormatEx(query, sizeof(query), g_sSqlRetrieveClient, g_sSQLTable, auth);
-	else if (identityMode == 2)
-		FormatEx(query, sizeof(query), g_sSqlRetrieveClientIp, g_sSQLTable, ip);
+	char identityWhere[MAX_NAME_LENGTH * 2 + 32];
+	BuildRankMeIdentityWhere(client, identityWhere, sizeof(identityWhere));
+	FormatEx(query, sizeof(query), g_sSqlRetrieveClient, g_sSQLTable, identityWhere);
 	
 	if (DEBUGGING) {
 		PrintToServer(query);

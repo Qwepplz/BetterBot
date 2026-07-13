@@ -1402,9 +1402,6 @@ public void SQL_StatsMe2Callback(Handle owner, Handle hndl, const char[] error, 
 	CloseHandle(hDatapack);
 	char Auth_receive[64];
 	char Name_receive[MAX_NAME_LENGTH];
-	int identityMode = g_RankBy;
-	if (type == 0 && target > 0 && target <= MaxClients)
-		identityMode = GetRankMeIdentityMode(target);
 	
 	if(type != 1){
 		
@@ -1414,9 +1411,14 @@ public void SQL_StatsMe2Callback(Handle owner, Handle hndl, const char[] error, 
 			SQL_FetchString(hndl,1,Auth_receive,64);
 			
 			SQL_FetchString(hndl,2,Name_receive,MAX_NAME_LENGTH);
-			
-			if((identityMode == 1 && StrEqual(name,Name_receive,false)) || (identityMode == 0 && StrEqual(Auth_receive,auth,false)))
+			if (type == 0) {
+				char Ip_receive[64];
+				SQL_FetchString(hndl,3,Ip_receive,sizeof(Ip_receive));
+				if (IsRankMeIdentityMatch(target, Auth_receive, Name_receive, Ip_receive))
+					break;
+			} else if ((g_RankBy == 1 && StrEqual(name,Name_receive,false)) || (g_RankBy == 0 && StrEqual(Auth_receive,auth,false))) {
 				break;
+			}
 		}
 
 	} else if (SQL_HasResultSet(hndl)){
