@@ -5660,17 +5660,21 @@ int FindAvailableTeammateColor(int iTeam, int iClient)
 
 bool EnsurePlayerTeammateColor(int iClient, int iTeam)
 {
-	if (g_iPlayerColor[iClient] >= 0 && g_iPlayerColor[iClient] < TEAMMATE_COLOR_COUNT)
+	int iColor = g_iPlayerColor[iClient];
+	if (iColor >= 0 && iColor < TEAMMATE_COLOR_COUNT && !IsTeammateColorInUse(iTeam, iColor, iClient))
 		return true;
+
+	g_iPlayerColor[iClient] = -1;
 
 	char szKey[32];
 	bool bHasHumanKey = GetHumanTeammateColorKey(iClient, szKey, sizeof(szKey));
-	int iColor;
 
 	if (!IsFakeClient(iClient) && !bHasHumanKey)
 		return false;
 
-	if (bHasHumanKey && g_smHumanTeammateColors.GetValue(szKey, iColor))
+	if (bHasHumanKey && g_smHumanTeammateColors.GetValue(szKey, iColor)
+		&& iColor >= 0 && iColor < TEAMMATE_COLOR_COUNT
+		&& !IsTeammateColorInUse(iTeam, iColor, iClient))
 	{
 		g_iPlayerColor[iClient] = iColor;
 		return true;
