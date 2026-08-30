@@ -36,11 +36,13 @@
 #define RETAKE_SAVE_PROGRESS_THRESHOLD 64.0
 #define BOMB_MOVE_INTERVAL 0.5
 #define SCRIPT_MOVE_INTERVAL 0.35
-#define NADE_SOLVE_INTERVAL 0.5
-#define NADE_SOLVE_BUDGET_WINDOW 0.1
-#define NADE_SOLVE_MAX_PER_WINDOW 2
+#define NADE_SOLVE_TRACE_BUDGET_PER_FRAME 256
+#define NADE_SOLVE_TIMEOUT_PER_ACTIVE_JOB 2.0
+#define NADE_SOLVE_ORIGIN_TOLERANCE 64.0
+#define NADE_SOLVE_TARGET_TOLERANCE 96.0
 #define NADE_SOLVE_CACHE_TTL 1.5
-#define NADE_SOLVE_CACHE_TARGET_TOLERANCE 96.0
+#define NADE_SOLVE_CACHE_SLOTS 2
+#define NADE_SIMULATION_MAX_TIME 5.0
 #define CT_SAVE_COMMIT_MIN_BOMB_DISTANCE 1200.0
 #define CT_SAVE_COMMIT_DEFUSE_CANCEL_DISTANCE 500.0
 
@@ -131,17 +133,14 @@ int g_iProfileRank[MAXPLAYERS+1], g_iPlayerColor[MAXPLAYERS+1], g_iTarget[MAXPLA
 int g_iCurrentRound, g_iRoundsPlayed, g_iCTScore, g_iTScore;
 int g_iProfileRankOffset, g_iPlayerColorOffset;
 int g_iBotTargetSpotOffset, g_iBotNearbyEnemiesOffset, g_iFireWeaponOffset, g_iEnemyVisibleOffset, g_iBotProfileOffset, g_iBotSafeTimeOffset, g_iBotEnemyOffset, g_iBotLookAtSpotStateOffset, g_iBotMoraleOffset, g_iBotTaskOffset, g_iBotDispositionOffset;
-float g_fBotOrigin[MAXPLAYERS+1][3], g_fTargetPos[MAXPLAYERS+1][3], g_fNadeTarget[MAXPLAYERS+1][3], g_fNadeSolveTarget[MAXPLAYERS+1][3];
+float g_fBotOrigin[MAXPLAYERS+1][3], g_fTargetPos[MAXPLAYERS+1][3], g_fNadeTarget[MAXPLAYERS+1][3];
 float g_fOriginalNoisePos[MAXPLAYERS+1][3];
 float g_fRoundStart, g_fFreezeTimeEnd;
 float g_fLookAngleMaxAccel[MAXPLAYERS+1], g_fReactionTime[MAXPLAYERS+1], g_fAggression[MAXPLAYERS+1], g_fShootTimestamp[MAXPLAYERS+1], g_fThrowNadeTimestamp[MAXPLAYERS+1], g_fCrouchTimestamp[MAXPLAYERS+1];
 float g_fSniperRetreatCooldown[MAXPLAYERS+1];
-float g_fNextNadeSolveAt[MAXPLAYERS+1];
-float g_fLastNadeSolveTarget[MAXPLAYERS+1][3], g_fLastNadeSolveLookAt[MAXPLAYERS+1][3], g_fLastNadeSolveTime[MAXPLAYERS+1];
-int g_iLastNadeSolveDefIndex[MAXPLAYERS+1];
-bool g_bLastNadeSolveValid[MAXPLAYERS+1], g_bLastNadeSolveSuccess[MAXPLAYERS+1];
-float g_fNadeSolveBudgetWindowStart;
-int g_iNadeSolvesThisWindow;
+float g_fLastNadeSolveOrigin[MAXPLAYERS+1][NADE_SOLVE_CACHE_SLOTS][3], g_fLastNadeSolveTarget[MAXPLAYERS+1][NADE_SOLVE_CACHE_SLOTS][3], g_fLastNadeSolveLookAt[MAXPLAYERS+1][NADE_SOLVE_CACHE_SLOTS][3], g_fLastNadeSolveTime[MAXPLAYERS+1][NADE_SOLVE_CACHE_SLOTS];
+int g_iLastNadeSolveDefIndex[MAXPLAYERS+1][NADE_SOLVE_CACHE_SLOTS];
+bool g_bLastNadeSolveValid[MAXPLAYERS+1][NADE_SOLVE_CACHE_SLOTS], g_bLastNadeSolveSuccess[MAXPLAYERS+1][NADE_SOLVE_CACHE_SLOTS];
 float g_fBombPos[3];
 float g_fBombsitePositions[16][3];
 int g_iBombsiteCount;
@@ -156,8 +155,58 @@ enum ScriptAction
 	ScriptAction_Fake
 }
 
-bool g_bNadeResolved[MAXPLAYERS+1];
-int g_iNadeSolveDefIndex[MAXPLAYERS+1];
+enum NadeSolvePhase
+{
+	NadeSolve_Idle,
+	NadeSolve_Coarse,
+	NadeSolve_Fine,
+	NadeSolve_Final
+}
+
+enum NadeCandidateState
+{
+	NadeCandidate_Running,
+	NadeCandidate_Finished,
+	NadeCandidate_Failed
+}
+
+enum NadeSolveRequestResult
+{
+	NadeRequest_Rejected,
+	NadeRequest_Queued,
+	NadeRequest_Submitted
+}
+
+enum struct NadeSolveJob
+{
+	NadeSolvePhase phase;
+	int clientUserId;
+	int grenadeEntRef;
+	int grenadeDefIndex;
+	float requestTime;
+	float deadlineTime;
+	float startOrigin[3];
+	float eyePosition[3];
+	float target[3];
+	bool hasFallbackTarget;
+	bool fallbackAttempted;
+	float fallbackTarget[3];
+	float yaw;
+	float currentPitch;
+	float bestPitch;
+	float fineEndPitch;
+	float bestDistance;
+	bool candidateActive;
+	float candidatePosition[3];
+	float candidateVelocity[3];
+	float candidateTime;
+	float candidateNextThink;
+	int candidateBounces;
+	bool candidatePendingPush;
+	float candidateRemainingTime;
+}
+
+bool g_bNadeThrowPending[MAXPLAYERS+1];
 ScriptAction g_iScriptAction[MAXPLAYERS+1];
 int g_iScriptActionIndex[MAXPLAYERS+1];
 float g_fScriptActionStart[MAXPLAYERS+1];
@@ -167,6 +216,9 @@ float g_fScriptNextMoveAt[MAXPLAYERS+1];
 float g_fLegacyDefaultNadeActionStart[MAXPLAYERS+1];
 float g_fLegacyDefaultNadeLastPos[MAXPLAYERS+1][3];
 float g_fLegacyDefaultNadeLastMoveTime[MAXPLAYERS+1];
+NadeSolveJob g_sNadeSolveJobs[MAXPLAYERS+1];
+int g_iNadeSolveRoundRobinClient = 1;
+int g_iNadeSolveActiveCount;
 bool g_bPeekAssigned[MAXPLAYERS+1];
 bool g_bTeamPeekUsedRound[4];
 bool g_bTeamPeekRollResolved[4];
@@ -588,6 +640,47 @@ public void OnMapStart()
 	InitializeMapRuntime();
 }
 
+public void OnGameFrame()
+{
+	int iTraceBudget = NADE_SOLVE_TRACE_BUDGET_PER_FRAME;
+	int iCursor = g_iNadeSolveRoundRobinClient;
+	int iInactiveClients = 0;
+	bool bValidated[MAXPLAYERS+1];
+	for (int i = 1; i <= MaxClients; i++)
+		bValidated[i] = false;
+
+	for (int iTurn = 0; iTurn < MaxClients * NADE_SOLVE_TRACE_BUDGET_PER_FRAME && iTraceBudget > 0; iTurn++)
+	{
+		int iClient = iCursor;
+		iCursor++;
+		if (iCursor > MaxClients)
+			iCursor = 1;
+
+		if (!IsNadeSolveActive(iClient))
+		{
+			iInactiveClients++;
+			if (iInactiveClients >= MaxClients)
+				break;
+			continue;
+		}
+
+		iInactiveClients = 0;
+		if (!bValidated[iClient])
+		{
+			bValidated[iClient] = true;
+			if (!IsNadeSolveJobRuntimeValid(iClient))
+			{
+				CancelNadeSolveJob(iClient);
+				continue;
+			}
+		}
+
+		AdvanceNadeSolveJob(iClient, iTraceBudget);
+	}
+
+	g_iNadeSolveRoundRobinClient = iCursor;
+}
+
 void HookPlayerResourceEntity()
 {
 	if (g_hPlayerResourceRetryTimer != null)
@@ -805,74 +898,150 @@ void ResetClientBombMove(int iClient)
 	g_fBombMoveTarget[iClient][2] = 0.0;
 }
 
+bool IsNadeSolveActive(int iClient)
+{
+	return iClient >= 1 && iClient <= MaxClients && g_sNadeSolveJobs[iClient].phase != NadeSolve_Idle;
+}
+
+void ClearNadeSolveJob(int iClient)
+{
+	if (iClient < 1 || iClient > MaxClients)
+		return;
+
+	if (g_sNadeSolveJobs[iClient].phase != NadeSolve_Idle && g_iNadeSolveActiveCount > 0)
+		g_iNadeSolveActiveCount--;
+
+	g_sNadeSolveJobs[iClient].phase = NadeSolve_Idle;
+	g_sNadeSolveJobs[iClient].clientUserId = 0;
+	g_sNadeSolveJobs[iClient].grenadeEntRef = INVALID_ENT_REFERENCE;
+	g_sNadeSolveJobs[iClient].grenadeDefIndex = 0;
+	g_sNadeSolveJobs[iClient].requestTime = 0.0;
+	g_sNadeSolveJobs[iClient].deadlineTime = 0.0;
+	g_sNadeSolveJobs[iClient].yaw = 0.0;
+	g_sNadeSolveJobs[iClient].currentPitch = 0.0;
+	g_sNadeSolveJobs[iClient].bestPitch = 0.0;
+	g_sNadeSolveJobs[iClient].fineEndPitch = 0.0;
+	g_sNadeSolveJobs[iClient].bestDistance = 0.0;
+	g_sNadeSolveJobs[iClient].hasFallbackTarget = false;
+	g_sNadeSolveJobs[iClient].fallbackAttempted = false;
+	g_sNadeSolveJobs[iClient].candidateActive = false;
+	g_sNadeSolveJobs[iClient].candidateTime = 0.0;
+	g_sNadeSolveJobs[iClient].candidateNextThink = 0.0;
+	g_sNadeSolveJobs[iClient].candidateBounces = 0;
+	g_sNadeSolveJobs[iClient].candidatePendingPush = false;
+	g_sNadeSolveJobs[iClient].candidateRemainingTime = 0.0;
+
+	for (int i = 0; i < 3; i++)
+	{
+		g_sNadeSolveJobs[iClient].startOrigin[i] = 0.0;
+		g_sNadeSolveJobs[iClient].eyePosition[i] = 0.0;
+		g_sNadeSolveJobs[iClient].target[i] = 0.0;
+		g_sNadeSolveJobs[iClient].fallbackTarget[i] = 0.0;
+		g_sNadeSolveJobs[iClient].candidatePosition[i] = 0.0;
+		g_sNadeSolveJobs[iClient].candidateVelocity[i] = 0.0;
+	}
+}
+
+void CancelNadeSolveJob(int iClient)
+{
+	ClearNadeSolveJob(iClient);
+	if (iClient >= 1 && iClient <= MaxClients)
+		g_bNadeThrowPending[iClient] = false;
+}
+
 void ResetClientNadeSolve(int iClient)
 {
 	if (iClient < 1 || iClient > MaxClients)
 		return;
 
-	g_fNextNadeSolveAt[iClient] = 0.0;
-	g_bLastNadeSolveValid[iClient] = false;
-	g_bLastNadeSolveSuccess[iClient] = false;
-	g_iLastNadeSolveDefIndex[iClient] = 0;
-	g_fLastNadeSolveTime[iClient] = 0.0;
-	g_fLastNadeSolveTarget[iClient][0] = 0.0;
-	g_fLastNadeSolveTarget[iClient][1] = 0.0;
-	g_fLastNadeSolveTarget[iClient][2] = 0.0;
-	g_fLastNadeSolveLookAt[iClient][0] = 0.0;
-	g_fLastNadeSolveLookAt[iClient][1] = 0.0;
-	g_fLastNadeSolveLookAt[iClient][2] = 0.0;
-}
-
-bool TryUseCachedNadeSolve(int iClient, const float fTarget[3], int iNadeDefIndex, float fLookAt[3], float fNow, bool &bSuccess)
-{
-	if (!g_bLastNadeSolveValid[iClient])
-		return false;
-
-	if (g_iLastNadeSolveDefIndex[iClient] != iNadeDefIndex)
-		return false;
-
-	if ((fNow - g_fLastNadeSolveTime[iClient]) > NADE_SOLVE_CACHE_TTL)
-		return false;
-
-	if (GetVectorDistance(g_fLastNadeSolveTarget[iClient], fTarget) > NADE_SOLVE_CACHE_TARGET_TOLERANCE)
-		return false;
-
-	bSuccess = g_bLastNadeSolveSuccess[iClient];
-	if (bSuccess)
-		Array_Copy(g_fLastNadeSolveLookAt[iClient], fLookAt, 3);
-	return true;
-}
-
-void StoreNadeSolveCache(int iClient, const float fTarget[3], int iNadeDefIndex, const float fLookAt[3], bool bSuccess, float fNow)
-{
-	g_bLastNadeSolveValid[iClient] = true;
-	g_bLastNadeSolveSuccess[iClient] = bSuccess;
-	g_iLastNadeSolveDefIndex[iClient] = iNadeDefIndex;
-	g_fLastNadeSolveTime[iClient] = fNow;
-	Array_Copy(fTarget, g_fLastNadeSolveTarget[iClient], 3);
-	if (bSuccess)
-		Array_Copy(fLookAt, g_fLastNadeSolveLookAt[iClient], 3);
-}
-
-bool ConsumeNadeSolveBudget(float fNow)
-{
-	if (g_fNadeSolveBudgetWindowStart <= 0.0 || (fNow - g_fNadeSolveBudgetWindowStart) >= NADE_SOLVE_BUDGET_WINDOW)
+	ClearNadeSolveJob(iClient);
+	g_bNadeThrowPending[iClient] = false;
+	for (int iCacheSlot = 0; iCacheSlot < NADE_SOLVE_CACHE_SLOTS; iCacheSlot++)
 	{
-		g_fNadeSolveBudgetWindowStart = fNow;
-		g_iNadeSolvesThisWindow = 0;
+		g_bLastNadeSolveValid[iClient][iCacheSlot] = false;
+		g_bLastNadeSolveSuccess[iClient][iCacheSlot] = false;
+		g_iLastNadeSolveDefIndex[iClient][iCacheSlot] = 0;
+		g_fLastNadeSolveTime[iClient][iCacheSlot] = 0.0;
+
+		for (int i = 0; i < 3; i++)
+		{
+			g_fLastNadeSolveOrigin[iClient][iCacheSlot][i] = 0.0;
+			g_fLastNadeSolveTarget[iClient][iCacheSlot][i] = 0.0;
+			g_fLastNadeSolveLookAt[iClient][iCacheSlot][i] = 0.0;
+		}
+	}
+}
+
+void ResetNadeSolveJobs()
+{
+	for (int i = 1; i <= MaxClients; i++)
+		ResetClientNadeSolve(i);
+
+	g_iNadeSolveActiveCount = 0;
+	g_iNadeSolveRoundRobinClient = 1;
+}
+
+bool TryUseCachedNadeSolve(int iClient, const float fOrigin[3], const float fTarget[3], int iNadeDefIndex, float fLookAt[3], float fNow, bool &bSuccess)
+{
+	for (int iCacheSlot = 0; iCacheSlot < NADE_SOLVE_CACHE_SLOTS; iCacheSlot++)
+	{
+		if (!g_bLastNadeSolveValid[iClient][iCacheSlot])
+			continue;
+
+		if (g_iLastNadeSolveDefIndex[iClient][iCacheSlot] != iNadeDefIndex)
+			continue;
+
+		if ((fNow - g_fLastNadeSolveTime[iClient][iCacheSlot]) > NADE_SOLVE_CACHE_TTL)
+			continue;
+
+		if (GetVectorDistance(g_fLastNadeSolveOrigin[iClient][iCacheSlot], fOrigin) > NADE_SOLVE_ORIGIN_TOLERANCE)
+			continue;
+
+		if (GetVectorDistance(g_fLastNadeSolveTarget[iClient][iCacheSlot], fTarget) > NADE_SOLVE_TARGET_TOLERANCE)
+			continue;
+
+		bSuccess = g_bLastNadeSolveSuccess[iClient][iCacheSlot];
+		if (bSuccess)
+			Array_Copy(g_fLastNadeSolveLookAt[iClient][iCacheSlot], fLookAt, 3);
+		return true;
 	}
 
-	if (g_iNadeSolvesThisWindow >= NADE_SOLVE_MAX_PER_WINDOW)
-		return false;
-
-	g_iNadeSolvesThisWindow++;
-	return true;
+	return false;
 }
 
-void ResetNadeSolveBudget()
+void StoreNadeSolveCache(int iClient, const float fOrigin[3], const float fTarget[3], int iNadeDefIndex, const float fLookAt[3], bool bSuccess, float fNow)
 {
-	g_fNadeSolveBudgetWindowStart = 0.0;
-	g_iNadeSolvesThisWindow = 0;
+	int iCacheSlot = -1;
+	float fOldestTime = fNow;
+	for (int i = 0; i < NADE_SOLVE_CACHE_SLOTS; i++)
+	{
+		if (g_bLastNadeSolveValid[iClient][i] && g_iLastNadeSolveDefIndex[iClient][i] == iNadeDefIndex && GetVectorDistance(g_fLastNadeSolveOrigin[iClient][i], fOrigin) <= NADE_SOLVE_ORIGIN_TOLERANCE && GetVectorDistance(g_fLastNadeSolveTarget[iClient][i], fTarget) <= NADE_SOLVE_TARGET_TOLERANCE)
+		{
+			iCacheSlot = i;
+			break;
+		}
+
+		if (!g_bLastNadeSolveValid[iClient][i])
+		{
+			iCacheSlot = i;
+			break;
+		}
+
+		if (iCacheSlot == -1 || g_fLastNadeSolveTime[iClient][i] < fOldestTime)
+		{
+			iCacheSlot = i;
+			fOldestTime = g_fLastNadeSolveTime[iClient][i];
+		}
+	}
+
+	g_bLastNadeSolveValid[iClient][iCacheSlot] = true;
+	g_bLastNadeSolveSuccess[iClient][iCacheSlot] = bSuccess;
+	g_iLastNadeSolveDefIndex[iClient][iCacheSlot] = iNadeDefIndex;
+	g_fLastNadeSolveTime[iClient][iCacheSlot] = fNow;
+	Array_Copy(fOrigin, g_fLastNadeSolveOrigin[iClient][iCacheSlot], 3);
+	Array_Copy(fTarget, g_fLastNadeSolveTarget[iClient][iCacheSlot], 3);
+	if (bSuccess)
+		Array_Copy(fLookAt, g_fLastNadeSolveLookAt[iClient][iCacheSlot], 3);
 }
 
 void BuyEcoPistolAndGear(int iClient, bool bDefaultPistol, int iTeam, bool bHasDefuser)
@@ -1116,6 +1285,7 @@ public void OnMapEnd()
 		SDKUnhook(g_iPlayerResourceEntity, SDKHook_ThinkPost, OnThinkPost);
 
 	g_iPlayerResourceEntity = -1;
+	ResetNadeSolveJobs();
 }
 
 public void OnClientPutInServer(int iClient)
@@ -1288,7 +1458,6 @@ public void OnRoundStart(Event eEvent, const char[] szName, bool bDontBroadcast)
 	g_bCTSaveLocked = false;
 	g_fCTSaveConditionSince = 0.0;
 	g_iLooseBombDropper = -1;
-	ResetNadeSolveBudget();
 	ParseRoundStrategies();
 	UpdateAliveTeamCounts();
 
@@ -1320,7 +1489,6 @@ public void OnRoundStart(Event eEvent, const char[] szName, bool bDontBroadcast)
 		g_bHasGottenDrop[i] = false;
 		g_bCheapDrop[i] = false;
 		g_bThrowGrenade[i] = false;
-		g_bNadeResolved[i] = false;
 
 		g_iTarget[i] = -1;
 		g_iPrevTarget[i] = -1;
@@ -1364,7 +1532,6 @@ public void OnRoundEnd(Event eEvent, const char[] szName, bool bDontBroadcast)
 
 	g_bCTSaveLocked = false;
 	g_fCTSaveConditionSince = 0.0;
-	ResetNadeSolveBudget();
 
 	for (int i = 1; i <= MaxClients; i++)
 	{
@@ -1416,6 +1583,7 @@ public void OnBombPlanted(Event eEvent, const char[] szName, bool bDontBroadcast
 	for (int i = 1; i <= MaxClients; i++)
 	{
 		ResetClientBombMove(i);
+		ResetClientNadeSolve(i);
 		if (IsValidClient(i) && IsFakeClient(i))
 			CancelClientActiveLineupActions(i, false);
 	}
@@ -1448,6 +1616,7 @@ void OnBombResolved()
 
 	for (int i = 1; i <= MaxClients; i++)
 	{
+		ResetClientNadeSolve(i);
 		if (IsValidClient(i) && IsFakeClient(i))
 			CancelClientActiveLineupActions(i, false);
 	}
@@ -1943,7 +2112,7 @@ public MRESReturn CCSBot_SetLookAt(int iClient, DHookParam hParams)
 			DHookGetParamVector(hParams, 2, fPos);
 
 			int iNade = FindNadeByDefIndex(iClient, g_iAllNades, sizeof(g_iAllNades));
-			if (iNade != -1 && ProcessGrenadeThrow(iClient, fPos, iNade))
+			if (iNade != -1 && ProcessGrenadeThrow(iClient, fPos, iNade) == NadeRequest_Submitted)
 				return MRES_Supercede;
 		}
 
@@ -1974,7 +2143,7 @@ public MRESReturn CCSBot_SetLookAt(int iClient, DHookParam hParams)
 		if (CanThrowNade(iClient) && IsItMyChance(3.0) && GetTask(iClient) != ESCAPE_FROM_BOMB && GetTask(iClient) != ESCAPE_FROM_FLAMES && GetEntityMoveType(iClient) != MOVETYPE_LADDER)
 		{
 			int iNade = FindNadeByDefIndex(iClient, g_iAllNades, sizeof(g_iAllNades));
-			if (iNade != -1 && (ProcessGrenadeThrow(iClient, g_fOriginalNoisePos[iClient], iNade) || ProcessGrenadeThrow(iClient, fNoisePos, iNade)))
+			if (iNade != -1 && ProcessGrenadeThrowWithFallback(iClient, g_fOriginalNoisePos[iClient], fNoisePos, iNade) == NadeRequest_Submitted)
 				return MRES_Supercede;
 		}
 
@@ -2007,7 +2176,7 @@ public MRESReturn CCSBot_SetLookAt(int iClient, DHookParam hParams)
 		if (CanThrowNade(iClient) && IsItMyChance(25.0) && GetTask(iClient) != ESCAPE_FROM_BOMB && GetTask(iClient) != ESCAPE_FROM_FLAMES && GetEntityMoveType(iClient) != MOVETYPE_LADDER)
 		{
 			int iNade = FindNadeByDefIndex(iClient, g_iAllNades, sizeof(g_iAllNades));
-			if (iNade != -1 && (ProcessGrenadeThrow(iClient, g_fOriginalNoisePos[iClient], iNade) || ProcessGrenadeThrow(iClient, fPos, iNade)))
+			if (iNade != -1 && ProcessGrenadeThrowWithFallback(iClient, g_fOriginalNoisePos[iClient], fPos, iNade) == NadeRequest_Submitted)
 				return MRES_Supercede;
 		}
 
@@ -2157,7 +2326,7 @@ public Action OnPlayerRunCmd(int iClient, int &iButtons, int &iImpulse, float fV
 		if (g_iScriptAction[iClient] != ScriptAction_None)
 			CancelClientScriptAction(iClient, false);
 		else if (BotMimic_IsPlayerMimicing(iClient))
-            BotMimic_StopPlayerMimic(iClient);
+			BotMimic_StopPlayerMimic(iClient);
 
 		ResetNadeTimestamps();
 		g_iDoingSmokeNum[iClient] = -1;
@@ -2187,7 +2356,7 @@ public Action OnPlayerRunCmd(int iClient, int &iButtons, int &iImpulse, float fV
 			}
 		}
 
-		if (!bAssignedScriptLineup && g_iScriptAction[iClient] == ScriptAction_None)
+		if (!bAssignedScriptLineup && g_iScriptAction[iClient] == ScriptAction_None && !IsNadeSolveActive(iClient) && !g_bNadeThrowPending[iClient])
 		{
 			int iLegacyNade = GetNearestGrenade(iClient);
 			if (iLegacyNade != -1)
@@ -2246,15 +2415,6 @@ public Action OnPlayerRunCmd(int iClient, int &iButtons, int &iImpulse, float fV
 
 	if (g_bThrowGrenade[iClient] && eItems_GetWeaponSlotByDefIndex(iDefIndex) == CS_SLOT_GRENADE)
 	{
-		if (!g_bNadeResolved[iClient] && fSpeed < 5.0)
-		{
-			float fLookAt[3];
-			if (SolveGrenadeToss(iClient, g_fNadeSolveTarget[iClient], fLookAt, g_iNadeSolveDefIndex[iClient]))
-				Array_Copy(fLookAt, g_fNadeTarget[iClient], 3);
-
-			g_bNadeResolved[iClient] = true;
-		}
-
 		BotThrowGrenade(iClient, g_fNadeTarget[iClient]);
 		g_fThrowNadeTimestamp[iClient] = fNow;
 	}
@@ -2492,11 +2652,19 @@ public void OnPlayerTeam(Event eEvent, const char[] szName, bool bDontBroadcast)
 	if (!IsValidClient(iClient))
 		return;
 
+	ResetClientNadeSolve(iClient);
 	CreateTimer(0.2, Timer_RefreshPlayerResourceData, GetClientUserId(iClient), TIMER_FLAG_NO_MAPCHANGE);
+}
+
+public Action BotMimic_OnPlayerStartsMimicing(int iClient, char[] szName, char[] szCategory, char[] szPath)
+{
+	CancelNadeSolveJob(iClient);
+	return Plugin_Continue;
 }
 
 public void BotMimic_OnPlayerStopsMimicing(int iClient, char[] szName, char[] szCategory, char[] szPath)
 {
+	CancelNadeSolveJob(iClient);
     g_iDoingSmokeNum[iClient] = -1;
 	ResetClientLegacyDefaultNadeTracking(iClient);
     ClearClientScriptAction(iClient);
@@ -3633,7 +3801,6 @@ bool ProcessRetakeSaveBehavior(int iClient, int &iButtons)
 	if (BotMimic_IsPlayerMimicing(iClient))
 		BotMimic_StopPlayerMimic(iClient);
 	g_bThrowGrenade[iClient] = false;
-	g_bNadeResolved[iClient] = false;
 
 	SetDisposition(iClient, OPPORTUNITY_FIRE);
 	BotEquipBestWeapon(iClient, true);
@@ -5066,6 +5233,7 @@ public Action Timer_DontForceThrow(Handle hTimer, any iUserId)
 
 	if (IsValidClient(iClient))
 	{
+		g_bNadeThrowPending[iClient] = false;
 		g_bThrowGrenade[iClient] = false;
 		BotEquipBestWeapon(iClient, true);
 	}
@@ -5079,6 +5247,9 @@ public void DelayThrow(int iUserId)
 
     if (IsValidClient(iClient))
     {
+        if (!g_bNadeThrowPending[iClient])
+            return;
+
         g_bThrowGrenade[iClient] = true;
         CreateTimer(3.0, Timer_DontForceThrow, iUserId);
     }
@@ -5196,229 +5367,278 @@ stock bool TraceGroundHeight(const float fPos[3], float &fHeight)
 	return bDidHit;
 }
 
-stock bool ProcessGrenadeThrow(int iClient, float fTarget[3], int iGrenadeEnt = -1)
+bool IsNadeSolveCommonStateAllowed(int iClient)
 {
-	float fNow = GetGameTime();
-	if (fNow < g_fNextNadeSolveAt[iClient])
+	if (!IsValidClient(iClient) || !IsFakeClient(iClient) || !IsPlayerAlive(iClient))
 		return false;
 
-	int iGrenadeSlot = iGrenadeEnt != -1 ? iGrenadeEnt : GetPlayerWeaponSlot(iClient, CS_SLOT_GRENADE);
-	if (!IsValidEntity(iGrenadeSlot))
+	int iTeam = GetClientTeam(iClient);
+	if (iTeam != CS_TEAM_T && iTeam != CS_TEAM_CT)
 		return false;
 
-	int iNadeDefIndex = GetEntProp(iGrenadeSlot, Prop_Send, "m_iItemDefinitionIndex");
+	if (g_bRoundDecided || IsBotMimicBlockedPhase() || BotMimic_IsPlayerMimicing(iClient))
+		return false;
 
-	float fGroundTarget[3];
-	fGroundTarget[0] = fTarget[0];
-	fGroundTarget[1] = fTarget[1];
-	fGroundTarget[2] = fTarget[2];
+	if (g_bThrowGrenade[iClient] || g_bNadeThrowPending[iClient] || g_iScriptAction[iClient] != ScriptAction_None || g_iDoingSmokeNum[iClient] != -1 || g_iClientStrategyRole[iClient] != -1)
+		return false;
 
-	float fHeight;
-	if (TraceGroundHeight(fTarget, fHeight))
-		fGroundTarget[2] = fHeight;
+	if (GetTask(iClient) == ESCAPE_FROM_BOMB || GetTask(iClient) == ESCAPE_FROM_FLAMES || GetEntityMoveType(iClient) == MOVETYPE_LADDER)
+		return false;
 
-	float fLookAt[3];
-	bool bCachedSuccess;
-	if (TryUseCachedNadeSolve(iClient, fGroundTarget, iNadeDefIndex, fLookAt, fNow, bCachedSuccess))
-	{
-		if (!bCachedSuccess)
-			return false;
-	}
-	else
-	{
-		if (!ConsumeNadeSolveBudget(fNow))
-			return false;
+	if (GetEntData(iClient, g_iEnemyVisibleOffset) != 0 || GetEntData(iClient, g_iBotNearbyEnemiesOffset) != 0)
+		return false;
 
-		g_fNextNadeSolveAt[iClient] = fNow + NADE_SOLVE_INTERVAL;
-		bool bSolved = SolveGrenadeToss(iClient, fGroundTarget, fLookAt, iNadeDefIndex);
-		StoreNadeSolveCache(iClient, fGroundTarget, iNadeDefIndex, fLookAt, bSolved, fNow);
-		if (!bSolved)
-			return false;
-	}
-
-	Array_Copy(fLookAt, g_fNadeTarget[iClient], 3);
-	Array_Copy(fGroundTarget, g_fNadeSolveTarget[iClient], 3);
-	g_iNadeSolveDefIndex[iClient] = iNadeDefIndex;
-	g_bNadeResolved[iClient] = false;
-	SwitchWeapon(iClient, iGrenadeSlot);
-	RequestFrame(DelayThrow, GetClientUserId(iClient));
 	return true;
 }
 
-bool SolveGrenadeToss(int iClient, const float fTarget[3], float fLookAt[3], int iNadeDefIndex)
+bool IsNadeSolveRequestAllowed(int iClient)
 {
-	float fEyePos[3];
-	GetClientEyePosition(iClient, fEyePos);
+	if (!IsNadeSolveCommonStateAllowed(iClient))
+		return false;
+
+	if (ShouldSaveInsteadOfRetake(iClient))
+		return false;
+
+	return true;
+}
+
+bool IsNadeSolveJobStateValid(int iClient)
+{
+	if (!IsNadeSolveActive(iClient) || !IsNadeSolveCommonStateAllowed(iClient))
+		return false;
+
+	if (g_bSaveActiveCache[iClient] || IsForceSaveEnabled())
+		return false;
+
+	return GetGameTime() <= g_sNadeSolveJobs[iClient].deadlineTime;
+}
+
+bool IsNadeSolveJobRuntimeValid(int iClient)
+{
+	if (!IsNadeSolveJobStateValid(iClient))
+		return false;
+
+	if (GetClientOfUserId(g_sNadeSolveJobs[iClient].clientUserId) != iClient)
+		return false;
+
+	int iGrenadeEnt = EntRefToEntIndex(g_sNadeSolveJobs[iClient].grenadeEntRef);
+	if (!IsValidEntity(iGrenadeEnt) || !HasEntProp(iGrenadeEnt, Prop_Send, "m_hOwnerEntity"))
+		return false;
+
+	if (GetEntPropEnt(iGrenadeEnt, Prop_Send, "m_hOwnerEntity") != iClient)
+		return false;
+
+	if (GetEntProp(iGrenadeEnt, Prop_Send, "m_iItemDefinitionIndex") != g_sNadeSolveJobs[iClient].grenadeDefIndex)
+		return false;
+
+	float fOrigin[3];
+	GetClientAbsOrigin(iClient, fOrigin);
+	if (GetVectorDistance(fOrigin, g_sNadeSolveJobs[iClient].startOrigin) > NADE_SOLVE_ORIGIN_TOLERANCE)
+		return false;
+
+	return true;
+}
+
+bool NadeSolveJobMatchesRequest(int iClient, int iGrenadeEnt, int iNadeDefIndex, const float fTarget[3])
+{
+	if (!IsNadeSolveActive(iClient))
+		return false;
+
+	if (g_sNadeSolveJobs[iClient].grenadeEntRef != EntIndexToEntRef(iGrenadeEnt))
+		return false;
+
+	if (g_sNadeSolveJobs[iClient].grenadeDefIndex != iNadeDefIndex)
+		return false;
+
+	return GetVectorDistance(g_sNadeSolveJobs[iClient].target, fTarget) <= NADE_SOLVE_TARGET_TOLERANCE;
+}
+
+void StartNadeSolveJob(int iClient, int iGrenadeEnt, int iNadeDefIndex, const float fOrigin[3], const float fEyePosition[3], const float fTarget[3], float fNow)
+{
+	ClearNadeSolveJob(iClient);
+
+	g_sNadeSolveJobs[iClient].phase = NadeSolve_Coarse;
+	g_iNadeSolveActiveCount++;
+	g_sNadeSolveJobs[iClient].clientUserId = GetClientUserId(iClient);
+	g_sNadeSolveJobs[iClient].grenadeEntRef = EntIndexToEntRef(iGrenadeEnt);
+	g_sNadeSolveJobs[iClient].grenadeDefIndex = iNadeDefIndex;
+	g_sNadeSolveJobs[iClient].requestTime = fNow;
+	g_sNadeSolveJobs[iClient].currentPitch = -75.0;
+	g_sNadeSolveJobs[iClient].bestPitch = 0.0;
+	g_sNadeSolveJobs[iClient].bestDistance = 999999.0;
+	g_sNadeSolveJobs[iClient].candidateActive = false;
+	float fTimeout = NADE_SOLVE_TIMEOUT_PER_ACTIVE_JOB * g_iNadeSolveActiveCount;
+	g_sNadeSolveJobs[iClient].deadlineTime = fNow + fTimeout;
+	for (int i = 1; i <= MaxClients; i++)
+	{
+		if (i == iClient || !IsNadeSolveActive(i))
+			continue;
+
+		float fDeadline = g_sNadeSolveJobs[i].requestTime + fTimeout;
+		if (fDeadline > g_sNadeSolveJobs[i].deadlineTime)
+			g_sNadeSolveJobs[i].deadlineTime = fDeadline;
+	}
+
+	Array_Copy(fOrigin, g_sNadeSolveJobs[iClient].startOrigin, 3);
+	Array_Copy(fEyePosition, g_sNadeSolveJobs[iClient].eyePosition, 3);
+	Array_Copy(fTarget, g_sNadeSolveJobs[iClient].target, 3);
 
 	float fDelta[3];
-	SubtractVectors(fTarget, fEyePos, fDelta);
+	SubtractVectors(fTarget, fEyePosition, fDelta);
+	g_sNadeSolveJobs[iClient].yaw = ArcTangent2(fDelta[1], fDelta[0]) * 180.0 / FLOAT_PI;
+}
 
-	float fTargetDist = GetVectorLength(fDelta);
-	if (fTargetDist < 250.0)
+bool IsNadeSolveJobValid(int iClient)
+{
+	if (!IsNadeSolveJobRuntimeValid(iClient) || ShouldSaveInsteadOfRetake(iClient))
 		return false;
-
-	float fYaw = ArcTangent2(fDelta[1], fDelta[0]) * 180.0 / FLOAT_PI;
-	float fGrav = g_cvGravity.FloatValue * 0.4;
-	float fThrowSpeed = 750.0 * 0.9;
-
-	float fBestDist = 999999.0;
-	float fBestPitch = 0.0;
-
-	for (float fPitch = -75.0; fPitch <= 75.0; fPitch += 3.0)
-	{
-		float fLaunchPitch = -10.0 + fPitch + FloatAbs(fPitch) * 10.0 / 90.0;
-
-		float fLandPos[3];
-		SimulateGrenade(fEyePos, fYaw, fLaunchPitch, fThrowSpeed, fGrav, iNadeDefIndex, fLandPos);
-
-		float fDist = GetVectorDistance(fLandPos, fTarget);
-		if (fDist < fBestDist)
-		{
-			fBestDist = fDist;
-			fBestPitch = fPitch;
-		}
-	}
-
-	if (fBestDist > 500.0)
-		return false;
-
-	for (float fPitch = fBestPitch - 3.0; fPitch <= fBestPitch + 3.0; fPitch += 0.5)
-	{
-		float fLaunchPitch = -10.0 + fPitch + FloatAbs(fPitch) * 10.0 / 90.0;
-
-		float fLandPos[3];
-		SimulateGrenade(fEyePos, fYaw, fLaunchPitch, fThrowSpeed, fGrav, iNadeDefIndex, fLandPos);
-
-		float fDist = GetVectorDistance(fLandPos, fTarget);
-		if (fDist < fBestDist)
-		{
-			fBestDist = fDist;
-			fBestPitch = fPitch;
-		}
-	}
-
-	if (fBestDist > 200.0)
-		return false;
-
-	float fFinalLandPos[3];
-	float fFinalLaunchPitch = -10.0 + fBestPitch + FloatAbs(fBestPitch) * 10.0 / 90.0;
-	SimulateGrenade(fEyePos, fYaw, fFinalLaunchPitch, fThrowSpeed, fGrav, iNadeDefIndex, fFinalLandPos);
-
-	fFinalLandPos[2] += 10.0;
-	float fTargetRaised[3];
-	fTargetRaised[0] = fTarget[0];
-	fTargetRaised[1] = fTarget[1];
-	fTargetRaised[2] = fTarget[2] + 10.0;
-
-	if (!IsPointVisible(fFinalLandPos, fTargetRaised))
-		return false;
-
-	float fDir[3], fAngles[3];
-	fAngles[0] = fBestPitch;
-	fAngles[1] = fYaw;
-	fAngles[2] = 0.0;
-	GetAngleVectors(fAngles, fDir, NULL_VECTOR, NULL_VECTOR);
-
-	fLookAt[0] = fEyePos[0] + fDir[0] * 1000.0;
-	fLookAt[1] = fEyePos[1] + fDir[1] * 1000.0;
-	fLookAt[2] = fEyePos[2] + fDir[2] * 1000.0;
 
 	return true;
 }
 
-void SimulateGrenade(const float fEyePos[3], float fYaw, float fLaunchPitch, float fSpeed, float fGravity, int iNadeDefIndex, float fEndPos[3])
+bool InitializeNadeCandidate(int iClient, int &iTraceBudget)
 {
+	if (iTraceBudget <= 0)
+		return false;
+
 	float fAngles[3], fDir[3];
-	fAngles[0] = fLaunchPitch;
-	fAngles[1] = fYaw;
+	fAngles[0] = -10.0 + g_sNadeSolveJobs[iClient].currentPitch + FloatAbs(g_sNadeSolveJobs[iClient].currentPitch) * 10.0 / 90.0;
+	fAngles[1] = g_sNadeSolveJobs[iClient].yaw;
 	fAngles[2] = 0.0;
 
 	GetAngleVectors(fAngles, fDir, NULL_VECTOR, NULL_VECTOR);
 	NormalizeVector(fDir, fDir);
 
-	float fVel[3], fPos[3], fNext[3];
-	fVel[0] = fDir[0] * fSpeed;
-	fVel[1] = fDir[1] * fSpeed;
-	fVel[2] = fDir[2] * fSpeed;
+	float fVelocity[3];
+	fVelocity[0] = fDir[0] * 750.0 * 0.9;
+	fVelocity[1] = fDir[1] * 750.0 * 0.9;
+	fVelocity[2] = fDir[2] * 750.0 * 0.9;
 
-	// Trace 22 units forward from eye, back up 6 units
 	float fSpawn[3];
-	fSpawn[0] = fEyePos[0] + fDir[0] * 22.0;
-	fSpawn[1] = fEyePos[1] + fDir[1] * 22.0;
-	fSpawn[2] = fEyePos[2] + fDir[2] * 22.0;
+	fSpawn[0] = g_sNadeSolveJobs[iClient].eyePosition[0] + fDir[0] * 22.0;
+	fSpawn[1] = g_sNadeSolveJobs[iClient].eyePosition[1] + fDir[1] * 22.0;
+	fSpawn[2] = g_sNadeSolveJobs[iClient].eyePosition[2] + fDir[2] * 22.0;
 
 	float fMins[3] = {-2.0, -2.0, -2.0};
 	float fMaxs[3] = {2.0, 2.0, 2.0};
+	float fPosition[3];
+	TR_TraceHullFilter(g_sNadeSolveJobs[iClient].eyePosition, fSpawn, fMins, fMaxs, MASK_SOLID, TraceEntityFilterStuff);
+	iTraceBudget--;
+	float fFraction = TR_GetFraction();
+	TR_GetEndPosition(fPosition);
 
-	TR_TraceHullFilter(fEyePos, fSpawn, fMins, fMaxs, MASK_SOLID, TraceEntityFilterStuff);
-	float fFrac = TR_GetFraction();
-	TR_GetEndPosition(fPos);
-
-	// Only back up if we have enough room (don't push behind eyes)
-	if (fFrac * 22.0 > 6.0)
+	if (fFraction * 22.0 > 6.0)
 	{
-		fPos[0] -= fDir[0] * 6.0;
-		fPos[1] -= fDir[1] * 6.0;
-		fPos[2] -= fDir[2] * 6.0;
+		fPosition[0] -= fDir[0] * 6.0;
+		fPosition[1] -= fDir[1] * 6.0;
+		fPosition[2] -= fDir[2] * 6.0;
 	}
 
-	float fDt = GetTickInterval();
-	int iBounces;
-	float fDetonateTime = GetNadeDetonateTime(iNadeDefIndex);
-	float fThinkInterval = (iNadeDefIndex == DEFIDX_MOLOTOV || iNadeDefIndex == DEFIDX_INCENDIARY) ? 0.1 : 0.2;
-	float fNextThink = fThinkInterval;
-	float fMolotovMaxSlopeZ = Cosine(DegToRad(g_cvMolotovMaxSlope.FloatValue));
+	g_sNadeSolveJobs[iClient].candidatePosition[0] = fPosition[0];
+	g_sNadeSolveJobs[iClient].candidatePosition[1] = fPosition[1];
+	g_sNadeSolveJobs[iClient].candidatePosition[2] = fPosition[2];
+	g_sNadeSolveJobs[iClient].candidateVelocity[0] = fVelocity[0];
+	g_sNadeSolveJobs[iClient].candidateVelocity[1] = fVelocity[1];
+	g_sNadeSolveJobs[iClient].candidateVelocity[2] = fVelocity[2];
+	g_sNadeSolveJobs[iClient].candidateTime = 0.0;
+	g_sNadeSolveJobs[iClient].candidateNextThink = (g_sNadeSolveJobs[iClient].grenadeDefIndex == DEFIDX_MOLOTOV || g_sNadeSolveJobs[iClient].grenadeDefIndex == DEFIDX_INCENDIARY) ? 0.1 : 0.2;
+	g_sNadeSolveJobs[iClient].candidateBounces = 0;
+	g_sNadeSolveJobs[iClient].candidatePendingPush = false;
+	g_sNadeSolveJobs[iClient].candidateRemainingTime = 0.0;
+	g_sNadeSolveJobs[iClient].candidateActive = true;
+	return true;
+}
 
-	for (float t = 0.0; t <= 60.0; t += fDt)
+NadeCandidateState AdvanceNadeCandidate(int iClient, int &iTraceBudget)
+{
+	if (!g_sNadeSolveJobs[iClient].candidateActive)
 	{
-		float fNewVelZ = fVel[2] - fGravity * fDt;
-		float fAvgVelZ = (fVel[2] + fNewVelZ) * 0.5;
+		if (!InitializeNadeCandidate(iClient, iTraceBudget))
+			return NadeCandidate_Running;
 
-		float fMove[3];
-		fMove[0] = fVel[0] * fDt;
-		fMove[1] = fVel[1] * fDt;
-		fMove[2] = fAvgVelZ * fDt;
-		fVel[2] = fNewVelZ;
+		return NadeCandidate_Running;
+	}
 
-		fNext[0] = fPos[0] + fMove[0];
-		fNext[1] = fPos[1] + fMove[1];
-		fNext[2] = fPos[2] + fMove[2];
+	if (iTraceBudget <= 0)
+		return NadeCandidate_Running;
 
-		TR_TraceHullFilter(fPos, fNext, fMins, fMaxs, MASK_SHOT_HULL, TraceEntityFilterStuff);
+	float fDt = GetTickInterval();
+	if (fDt <= 0.0)
+		return NadeCandidate_Failed;
 
-		if (TR_GetFraction() != 1.0)
+	if (g_sNadeSolveJobs[iClient].candidateTime >= NADE_SIMULATION_MAX_TIME)
+	{
+		g_sNadeSolveJobs[iClient].candidateActive = false;
+		return NadeCandidate_Finished;
+	}
+
+	float fMins[3] = {-2.0, -2.0, -2.0};
+	float fMaxs[3] = {2.0, 2.0, 2.0};
+	float fTime = g_sNadeSolveJobs[iClient].candidateTime;
+
+	if (g_sNadeSolveJobs[iClient].candidatePendingPush)
+	{
+		float fPush[3];
+		fPush[0] = g_sNadeSolveJobs[iClient].candidatePosition[0] + g_sNadeSolveJobs[iClient].candidateVelocity[0] * g_sNadeSolveJobs[iClient].candidateRemainingTime;
+		fPush[1] = g_sNadeSolveJobs[iClient].candidatePosition[1] + g_sNadeSolveJobs[iClient].candidateVelocity[1] * g_sNadeSolveJobs[iClient].candidateRemainingTime;
+		fPush[2] = g_sNadeSolveJobs[iClient].candidatePosition[2] + g_sNadeSolveJobs[iClient].candidateVelocity[2] * g_sNadeSolveJobs[iClient].candidateRemainingTime;
+
+		float fPosition[3];
+		TR_TraceHullFilter(g_sNadeSolveJobs[iClient].candidatePosition, fPush, fMins, fMaxs, MASK_SHOT_HULL, TraceEntityFilterStuff);
+		iTraceBudget--;
+		TR_GetEndPosition(fPosition);
+		Array_Copy(fPosition, g_sNadeSolveJobs[iClient].candidatePosition, 3);
+		g_sNadeSolveJobs[iClient].candidatePendingPush = false;
+		g_sNadeSolveJobs[iClient].candidateRemainingTime = 0.0;
+		if (g_sNadeSolveJobs[iClient].candidateBounces > 20)
 		{
-			float fFraction = TR_GetFraction();
+			g_sNadeSolveJobs[iClient].candidateActive = false;
+			return NadeCandidate_Finished;
+		}
+	}
+	else
+	{
+		float fNewVelocityZ = g_sNadeSolveJobs[iClient].candidateVelocity[2] - g_cvGravity.FloatValue * 0.4 * fDt;
+		float fAverageVelocityZ = (g_sNadeSolveJobs[iClient].candidateVelocity[2] + fNewVelocityZ) * 0.5;
+		float fNext[3];
+		fNext[0] = g_sNadeSolveJobs[iClient].candidatePosition[0] + g_sNadeSolveJobs[iClient].candidateVelocity[0] * fDt;
+		fNext[1] = g_sNadeSolveJobs[iClient].candidatePosition[1] + g_sNadeSolveJobs[iClient].candidateVelocity[1] * fDt;
+		fNext[2] = g_sNadeSolveJobs[iClient].candidatePosition[2] + fAverageVelocityZ * fDt;
+		g_sNadeSolveJobs[iClient].candidateVelocity[2] = fNewVelocityZ;
+
+		TR_TraceHullFilter(g_sNadeSolveJobs[iClient].candidatePosition, fNext, fMins, fMaxs, MASK_SHOT_HULL, TraceEntityFilterStuff);
+		iTraceBudget--;
+		float fFraction = TR_GetFraction();
+
+		if (fFraction != 1.0)
+		{
 			TR_GetEndPosition(fNext);
 
 			float fNormal[3];
 			TR_GetPlaneNormal(INVALID_HANDLE, fNormal);
 			int iHitEnt = TR_GetEntityIndex();
 
-			// Molotov/incendiary ground detonation
-			if ((iNadeDefIndex == DEFIDX_MOLOTOV || iNadeDefIndex == DEFIDX_INCENDIARY) && fNormal[2] >= fMolotovMaxSlopeZ)
+			if ((g_sNadeSolveJobs[iClient].grenadeDefIndex == DEFIDX_MOLOTOV || g_sNadeSolveJobs[iClient].grenadeDefIndex == DEFIDX_INCENDIARY) && fNormal[2] >= Cosine(DegToRad(g_cvMolotovMaxSlope.FloatValue)))
 			{
 				if (iHitEnt == 0 || !IsValidClient(iHitEnt))
 				{
-					Array_Copy(fNext, fEndPos, 3);
-					return;
+					Array_Copy(fNext, g_sNadeSolveJobs[iClient].candidatePosition, 3);
+					g_sNadeSolveJobs[iClient].candidateActive = false;
+					return NadeCandidate_Finished;
 				}
 			}
 
-			// Reflect velocity (PhysicsClipVelocity with overbounce 2.0)
-			float fDot = GetVectorDotProduct(fVel, fNormal);
-			fVel[0] -= 2.0 * fDot * fNormal[0];
-			fVel[1] -= 2.0 * fDot * fNormal[1];
-			fVel[2] -= 2.0 * fDot * fNormal[2];
+			float fDot = GetVectorDotProduct(g_sNadeSolveJobs[iClient].candidateVelocity, fNormal);
+			g_sNadeSolveJobs[iClient].candidateVelocity[0] -= 2.0 * fDot * fNormal[0];
+			g_sNadeSolveJobs[iClient].candidateVelocity[1] -= 2.0 * fDot * fNormal[1];
+			g_sNadeSolveJobs[iClient].candidateVelocity[2] -= 2.0 * fDot * fNormal[2];
 
-			// STOP_EPSILON - zero out tiny velocity components
 			for (int i = 0; i < 3; i++)
 			{
-				if (fVel[i] > -0.1 && fVel[i] < 0.1)
-					fVel[i] = 0.0;
+				if (g_sNadeSolveJobs[iClient].candidateVelocity[i] > -0.1 && g_sNadeSolveJobs[iClient].candidateVelocity[i] < 0.1)
+					g_sNadeSolveJobs[iClient].candidateVelocity[i] = 0.0;
 			}
 
-			// Apply elasticity
 			float fElasticity = 0.45;
 			if (iHitEnt > 0)
 			{
@@ -5431,97 +5651,337 @@ void SimulateGrenade(const float fEyePos[3], float fYaw, float fLaunchPitch, flo
 			if (fElasticity > 0.9)
 				fElasticity = 0.9;
 
-			ScaleVector(fVel, fElasticity);
+			ScaleVector(g_sNadeSolveJobs[iClient].candidateVelocity, fElasticity);
 
-			// Speed dampening on floor hits at high speed
 			if (fNormal[2] > 0.7)
 			{
-				float fSpeedSq = GetVectorDotProduct(fVel, fVel);
+				float fSpeedSq = GetVectorDotProduct(g_sNadeSolveJobs[iClient].candidateVelocity, g_sNadeSolveJobs[iClient].candidateVelocity);
 				if (fSpeedSq > 96000.0)
 				{
-					float fVelNorm[3];
-					NormalizeVector(fVel, fVelNorm);
-					float fDotClamp = GetVectorDotProduct(fVelNorm, fNormal);
+					float fVelocityNormal[3];
+					NormalizeVector(g_sNadeSolveJobs[iClient].candidateVelocity, fVelocityNormal);
+					float fDotClamp = GetVectorDotProduct(fVelocityNormal, fNormal);
 					if (fDotClamp > 0.5)
-						ScaleVector(fVel, 1.0 - fDotClamp + 0.5);
+						ScaleVector(g_sNadeSolveJobs[iClient].candidateVelocity, 1.0 - fDotClamp + 0.5);
 				}
 
-				if (fSpeedSq < 400.0) // 20^2
+				if (fSpeedSq < 400.0)
 				{
-					fVel[0] = 0.0;
-					fVel[1] = 0.0;
-					fVel[2] = 0.0;
-					Array_Copy(fNext, fEndPos, 3);
-					return;
+					g_sNadeSolveJobs[iClient].candidateVelocity[0] = 0.0;
+					g_sNadeSolveJobs[iClient].candidateVelocity[1] = 0.0;
+					g_sNadeSolveJobs[iClient].candidateVelocity[2] = 0.0;
+					Array_Copy(fNext, g_sNadeSolveJobs[iClient].candidatePosition, 3);
+					g_sNadeSolveJobs[iClient].candidateActive = false;
+					return NadeCandidate_Finished;
 				}
 			}
 
-			// Continue for remainder of tick (traced re-push)
 			float fRemaining = (1.0 - fFraction) * fDt;
+			Array_Copy(fNext, g_sNadeSolveJobs[iClient].candidatePosition, 3);
+			g_sNadeSolveJobs[iClient].candidateBounces++;
+
 			if (fRemaining > 0.0)
 			{
-				float fPush[3];
-				fPush[0] = fNext[0] + fVel[0] * fRemaining;
-				fPush[1] = fNext[1] + fVel[1] * fRemaining;
-				fPush[2] = fNext[2] + fVel[2] * fRemaining;
-
-				TR_TraceHullFilter(fNext, fPush, fMins, fMaxs, MASK_SHOT_HULL, TraceEntityFilterStuff);
-				TR_GetEndPosition(fNext);
+				g_sNadeSolveJobs[iClient].candidatePendingPush = true;
+				g_sNadeSolveJobs[iClient].candidateRemainingTime = fRemaining;
+				return NadeCandidate_Running;
 			}
 
-			iBounces++;
-			if (iBounces > 20)
+			if (g_sNadeSolveJobs[iClient].candidateBounces > 20)
 			{
-				Array_Copy(fNext, fEndPos, 3);
-				return;
+				g_sNadeSolveJobs[iClient].candidateActive = false;
+				return NadeCandidate_Finished;
 			}
 		}
-
-		Array_Copy(fNext, fPos, 3);
-
-		// Think-based detonation
-		if (t >= fNextThink)
+		else
 		{
-			switch (iNadeDefIndex)
-			{
-				case DEFIDX_HE, DEFIDX_FLASH:
-				{
-					if (t >= fDetonateTime)
-					{
-						Array_Copy(fPos, fEndPos, 3);
-						return;
-					}
-				}
-				case DEFIDX_SMOKE:
-				{
-					if (GetVectorDotProduct(fVel, fVel) <= 0.01) // 0.1^2
-					{
-						Array_Copy(fPos, fEndPos, 3);
-						return;
-					}
-				}
-				case DEFIDX_DECOY:
-				{
-					if (GetVectorDotProduct(fVel, fVel) < 0.04) // 0.2^2
-					{
-						Array_Copy(fPos, fEndPos, 3);
-						return;
-					}
-				}
-				case DEFIDX_MOLOTOV, DEFIDX_INCENDIARY:
-				{
-					if (t >= fDetonateTime)
-					{
-						Array_Copy(fPos, fEndPos, 3);
-						return;
-					}
-				}
-			}
-			fNextThink = t + fThinkInterval;
+			Array_Copy(fNext, g_sNadeSolveJobs[iClient].candidatePosition, 3);
 		}
 	}
 
-	Array_Copy(fPos, fEndPos, 3);
+	if (fTime >= g_sNadeSolveJobs[iClient].candidateNextThink)
+	{
+		switch (g_sNadeSolveJobs[iClient].grenadeDefIndex)
+		{
+			case DEFIDX_HE, DEFIDX_FLASH:
+			{
+				if (fTime >= GetNadeDetonateTime(g_sNadeSolveJobs[iClient].grenadeDefIndex))
+				{
+					g_sNadeSolveJobs[iClient].candidateActive = false;
+					return NadeCandidate_Finished;
+				}
+			}
+			case DEFIDX_SMOKE:
+			{
+				if (GetVectorDotProduct(g_sNadeSolveJobs[iClient].candidateVelocity, g_sNadeSolveJobs[iClient].candidateVelocity) <= 0.01)
+				{
+					g_sNadeSolveJobs[iClient].candidateActive = false;
+					return NadeCandidate_Finished;
+				}
+			}
+			case DEFIDX_DECOY:
+			{
+				if (GetVectorDotProduct(g_sNadeSolveJobs[iClient].candidateVelocity, g_sNadeSolveJobs[iClient].candidateVelocity) < 0.04)
+				{
+					g_sNadeSolveJobs[iClient].candidateActive = false;
+					return NadeCandidate_Finished;
+				}
+			}
+			case DEFIDX_MOLOTOV, DEFIDX_INCENDIARY:
+			{
+				if (fTime >= GetNadeDetonateTime(g_sNadeSolveJobs[iClient].grenadeDefIndex))
+				{
+					g_sNadeSolveJobs[iClient].candidateActive = false;
+					return NadeCandidate_Finished;
+				}
+			}
+		}
+		g_sNadeSolveJobs[iClient].candidateNextThink = fTime + ((g_sNadeSolveJobs[iClient].grenadeDefIndex == DEFIDX_MOLOTOV || g_sNadeSolveJobs[iClient].grenadeDefIndex == DEFIDX_INCENDIARY) ? 0.1 : 0.2);
+	}
+
+	g_sNadeSolveJobs[iClient].candidateTime = fTime + fDt;
+	if (g_sNadeSolveJobs[iClient].candidateTime >= NADE_SIMULATION_MAX_TIME)
+	{
+		g_sNadeSolveJobs[iClient].candidateActive = false;
+		return NadeCandidate_Finished;
+	}
+
+	return NadeCandidate_Running;
+}
+
+bool SubmitNadeThrow(int iClient, int iGrenadeEnt, const float fLookAt[3], int iNadeDefIndex)
+{
+	if (!IsValidClient(iClient) || !IsPlayerAlive(iClient) || g_bThrowGrenade[iClient] || g_bNadeThrowPending[iClient] || !IsValidEntity(iGrenadeEnt) || !HasEntProp(iGrenadeEnt, Prop_Send, "m_hOwnerEntity") || GetEntPropEnt(iGrenadeEnt, Prop_Send, "m_hOwnerEntity") != iClient || GetEntProp(iGrenadeEnt, Prop_Send, "m_iItemDefinitionIndex") != iNadeDefIndex)
+		return false;
+
+	Array_Copy(fLookAt, g_fNadeTarget[iClient], 3);
+	g_bNadeThrowPending[iClient] = true;
+	SwitchWeapon(iClient, iGrenadeEnt);
+	RequestFrame(DelayThrow, GetClientUserId(iClient));
+	return true;
+}
+
+void FailNadeSolveJob(int iClient)
+{
+	if (!IsNadeSolveActive(iClient))
+		return;
+
+	float fOrigin[3], fTarget[3], fFallbackTarget[3];
+	bool bStartFallback = g_sNadeSolveJobs[iClient].hasFallbackTarget && !g_sNadeSolveJobs[iClient].fallbackAttempted;
+	int iGrenadeEnt = EntRefToEntIndex(g_sNadeSolveJobs[iClient].grenadeEntRef);
+	Array_Copy(g_sNadeSolveJobs[iClient].startOrigin, fOrigin, 3);
+	Array_Copy(g_sNadeSolveJobs[iClient].target, fTarget, 3);
+	if (bStartFallback)
+		Array_Copy(g_sNadeSolveJobs[iClient].fallbackTarget, fFallbackTarget, 3);
+
+	StoreNadeSolveCache(iClient, fOrigin, fTarget, g_sNadeSolveJobs[iClient].grenadeDefIndex, NULL_VECTOR, false, GetGameTime());
+
+	ClearNadeSolveJob(iClient);
+
+	if (bStartFallback)
+	{
+		ProcessGrenadeThrow(iClient, fFallbackTarget, iGrenadeEnt);
+		if (IsNadeSolveActive(iClient))
+		{
+			g_sNadeSolveJobs[iClient].hasFallbackTarget = true;
+			g_sNadeSolveJobs[iClient].fallbackAttempted = true;
+			Array_Copy(fTarget, g_sNadeSolveJobs[iClient].fallbackTarget, 3);
+		}
+	}
+}
+
+void CommitNadeSolveJob(int iClient, const float fLookAt[3])
+{
+	if (!IsNadeSolveJobValid(iClient))
+	{
+		CancelNadeSolveJob(iClient);
+		return;
+	}
+
+	int iGrenadeEnt = EntRefToEntIndex(g_sNadeSolveJobs[iClient].grenadeEntRef);
+	int iNadeDefIndex = g_sNadeSolveJobs[iClient].grenadeDefIndex;
+	float fOrigin[3], fTarget[3];
+	Array_Copy(g_sNadeSolveJobs[iClient].startOrigin, fOrigin, 3);
+	Array_Copy(g_sNadeSolveJobs[iClient].target, fTarget, 3);
+	if (!SubmitNadeThrow(iClient, iGrenadeEnt, fLookAt, iNadeDefIndex))
+	{
+		CancelNadeSolveJob(iClient);
+		return;
+	}
+
+	StoreNadeSolveCache(iClient, fOrigin, fTarget, iNadeDefIndex, fLookAt, true, GetGameTime());
+	ClearNadeSolveJob(iClient);
+}
+
+void FinishNadeCandidate(int iClient)
+{
+	if (g_sNadeSolveJobs[iClient].phase == NadeSolve_Final)
+	{
+		if (!IsNadeSolveJobValid(iClient))
+		{
+			CancelNadeSolveJob(iClient);
+			return;
+		}
+
+		float fFinalLandPos[3], fTargetRaised[3];
+		Array_Copy(g_sNadeSolveJobs[iClient].candidatePosition, fFinalLandPos, 3);
+		fFinalLandPos[2] += 10.0;
+		Array_Copy(g_sNadeSolveJobs[iClient].target, fTargetRaised, 3);
+		fTargetRaised[2] += 10.0;
+		if (!IsPointVisible(fFinalLandPos, fTargetRaised))
+		{
+			FailNadeSolveJob(iClient);
+			return;
+		}
+
+		float fAngles[3], fDirection[3], fLookAt[3];
+		fAngles[0] = g_sNadeSolveJobs[iClient].bestPitch;
+		fAngles[1] = g_sNadeSolveJobs[iClient].yaw;
+		fAngles[2] = 0.0;
+		GetAngleVectors(fAngles, fDirection, NULL_VECTOR, NULL_VECTOR);
+		fLookAt[0] = g_sNadeSolveJobs[iClient].eyePosition[0] + fDirection[0] * 1000.0;
+		fLookAt[1] = g_sNadeSolveJobs[iClient].eyePosition[1] + fDirection[1] * 1000.0;
+		fLookAt[2] = g_sNadeSolveJobs[iClient].eyePosition[2] + fDirection[2] * 1000.0;
+		CommitNadeSolveJob(iClient, fLookAt);
+		return;
+	}
+
+	float fDistance = GetVectorDistance(g_sNadeSolveJobs[iClient].candidatePosition, g_sNadeSolveJobs[iClient].target);
+	if (fDistance < g_sNadeSolveJobs[iClient].bestDistance)
+	{
+		g_sNadeSolveJobs[iClient].bestDistance = fDistance;
+		g_sNadeSolveJobs[iClient].bestPitch = g_sNadeSolveJobs[iClient].currentPitch;
+	}
+
+	if (g_sNadeSolveJobs[iClient].phase == NadeSolve_Coarse)
+	{
+		if (g_sNadeSolveJobs[iClient].currentPitch < 75.0)
+		{
+			g_sNadeSolveJobs[iClient].currentPitch += 3.0;
+			return;
+		}
+
+		if (g_sNadeSolveJobs[iClient].bestDistance > 500.0)
+		{
+			FailNadeSolveJob(iClient);
+			return;
+		}
+
+		g_sNadeSolveJobs[iClient].phase = NadeSolve_Fine;
+		g_sNadeSolveJobs[iClient].currentPitch = g_sNadeSolveJobs[iClient].bestPitch - 3.0;
+		g_sNadeSolveJobs[iClient].fineEndPitch = g_sNadeSolveJobs[iClient].bestPitch + 3.0;
+		return;
+	}
+
+	if (g_sNadeSolveJobs[iClient].currentPitch < g_sNadeSolveJobs[iClient].fineEndPitch - 0.001)
+	{
+		g_sNadeSolveJobs[iClient].currentPitch += 0.5;
+		return;
+	}
+
+	if (g_sNadeSolveJobs[iClient].bestDistance > 200.0)
+	{
+		FailNadeSolveJob(iClient);
+		return;
+	}
+
+	g_sNadeSolveJobs[iClient].phase = NadeSolve_Final;
+	g_sNadeSolveJobs[iClient].currentPitch = g_sNadeSolveJobs[iClient].bestPitch;
+}
+
+void AdvanceNadeSolveJob(int iClient, int &iTraceBudget)
+{
+	if (!IsNadeSolveActive(iClient) || iTraceBudget <= 0)
+		return;
+
+	NadeCandidateState eState = AdvanceNadeCandidate(iClient, iTraceBudget);
+	if (eState == NadeCandidate_Failed)
+	{
+		FailNadeSolveJob(iClient);
+		return;
+	}
+
+	if (eState == NadeCandidate_Finished)
+		FinishNadeCandidate(iClient);
+}
+
+stock NadeSolveRequestResult ProcessGrenadeThrow(int iClient, float fTarget[3], int iGrenadeEnt = -1)
+{
+	float fNow = GetGameTime();
+	if (IsNadeSolveActive(iClient) && !IsNadeSolveJobValid(iClient))
+		CancelNadeSolveJob(iClient);
+
+	if (!IsNadeSolveRequestAllowed(iClient))
+		return NadeRequest_Rejected;
+
+	int iGrenadeSlot = iGrenadeEnt != -1 ? iGrenadeEnt : GetPlayerWeaponSlot(iClient, CS_SLOT_GRENADE);
+	if (!IsValidEntity(iGrenadeSlot) || !HasEntProp(iGrenadeSlot, Prop_Send, "m_hOwnerEntity") || GetEntPropEnt(iGrenadeSlot, Prop_Send, "m_hOwnerEntity") != iClient)
+		return NadeRequest_Rejected;
+
+	int iNadeDefIndex = GetEntProp(iGrenadeSlot, Prop_Send, "m_iItemDefinitionIndex");
+
+	float fGroundTarget[3];
+	fGroundTarget[0] = fTarget[0];
+	fGroundTarget[1] = fTarget[1];
+	fGroundTarget[2] = fTarget[2];
+
+	float fHeight;
+	if (TraceGroundHeight(fTarget, fHeight))
+		fGroundTarget[2] = fHeight;
+
+	float fOrigin[3], fEyePosition[3], fDelta[3];
+	GetClientAbsOrigin(iClient, fOrigin);
+	GetClientEyePosition(iClient, fEyePosition);
+	SubtractVectors(fGroundTarget, fEyePosition, fDelta);
+	if (GetVectorLength(fDelta) < 250.0)
+	{
+		StoreNadeSolveCache(iClient, fOrigin, fGroundTarget, iNadeDefIndex, NULL_VECTOR, false, fNow);
+		return NadeRequest_Rejected;
+	}
+
+	if (IsNadeSolveActive(iClient))
+	{
+		if (NadeSolveJobMatchesRequest(iClient, iGrenadeSlot, iNadeDefIndex, fGroundTarget) || (g_sNadeSolveJobs[iClient].hasFallbackTarget && g_sNadeSolveJobs[iClient].grenadeEntRef == EntIndexToEntRef(iGrenadeSlot) && g_sNadeSolveJobs[iClient].grenadeDefIndex == iNadeDefIndex && GetVectorDistance(g_sNadeSolveJobs[iClient].fallbackTarget, fGroundTarget) <= NADE_SOLVE_TARGET_TOLERANCE))
+			return NadeRequest_Queued;
+
+		CancelNadeSolveJob(iClient);
+	}
+
+	float fLookAt[3];
+	bool bCachedSuccess;
+	if (TryUseCachedNadeSolve(iClient, fOrigin, fGroundTarget, iNadeDefIndex, fLookAt, fNow, bCachedSuccess))
+	{
+		if (!bCachedSuccess)
+			return NadeRequest_Rejected;
+
+		if (SubmitNadeThrow(iClient, iGrenadeSlot, fLookAt, iNadeDefIndex))
+			return NadeRequest_Submitted;
+
+		return NadeRequest_Rejected;
+	}
+
+	StartNadeSolveJob(iClient, iGrenadeSlot, iNadeDefIndex, fOrigin, fEyePosition, fGroundTarget, fNow);
+	return NadeRequest_Queued;
+}
+
+stock NadeSolveRequestResult ProcessGrenadeThrowWithFallback(int iClient, float fPrimaryTarget[3], float fFallbackTarget[3], int iGrenadeEnt = -1)
+{
+	NadeSolveRequestResult eResult = ProcessGrenadeThrow(iClient, fPrimaryTarget, iGrenadeEnt);
+	if (eResult == NadeRequest_Queued)
+	{
+		if (IsNadeSolveActive(iClient) && !g_sNadeSolveJobs[iClient].hasFallbackTarget)
+		{
+			g_sNadeSolveJobs[iClient].hasFallbackTarget = true;
+			Array_Copy(fFallbackTarget, g_sNadeSolveJobs[iClient].fallbackTarget, 3);
+		}
+
+		return eResult;
+	}
+
+	if (eResult == NadeRequest_Rejected)
+		return ProcessGrenadeThrow(iClient, fFallbackTarget, iGrenadeEnt);
+
+	return eResult;
 }
 
 float GetNadeDetonateTime(int iNadeDefIndex)
@@ -5533,7 +5993,7 @@ float GetNadeDetonateTime(int iNadeDefIndex)
 		case DEFIDX_MOLOTOV, DEFIDX_INCENDIARY:
 			return g_cvMolotovDetonateTime.FloatValue;
 	}
-	return 60.0; // smoke/decoy detonate by velocity, not time
+	return 0.0;
 }
 
 stock bool LineGoesThroughSmoke(const float fFrom[3], const float fTo[3])
@@ -5833,7 +6293,7 @@ stock bool IsItMyChance(float fChance)
 
 stock bool IsClientScriptIdle(int iClient)
 {
-	return (g_iScriptAction[iClient] == ScriptAction_None && g_iDoingSmokeNum[iClient] == -1 && !BotMimic_IsPlayerMimicing(iClient) && !g_bThrowGrenade[iClient] && g_iClientStrategyRole[iClient] == -1);
+	return (g_iScriptAction[iClient] == ScriptAction_None && g_iDoingSmokeNum[iClient] == -1 && !BotMimic_IsPlayerMimicing(iClient) && !g_bThrowGrenade[iClient] && !g_bNadeThrowPending[iClient] && g_iClientStrategyRole[iClient] == -1 && !IsNadeSolveActive(iClient));
 }
 
 stock void ReleaseClientScriptLineupClaim(int iClient)
@@ -5935,7 +6395,6 @@ stock void CancelClientLegacyDefaultNadeAction(int iClient)
 
 	g_iDoingSmokeNum[iClient] = -1;
 	g_bThrowGrenade[iClient] = false;
-	g_bNadeResolved[iClient] = false;
 	ResetClientLegacyDefaultNadeTracking(iClient);
 }
 
@@ -5958,6 +6417,7 @@ stock void CancelClientScriptAction(int iClient, bool bSwitchWeapon = true)
 
 stock void CancelClientActiveLineupActions(int iClient, bool bSwitchWeapon = true)
 {
+	CancelNadeSolveJob(iClient);
 	CancelClientScriptAction(iClient, bSwitchWeapon);
 	CancelClientLegacyDefaultNadeAction(iClient);
 }
