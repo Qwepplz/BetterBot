@@ -36,8 +36,11 @@
 #define RETAKE_SAVE_PROGRESS_THRESHOLD 64.0
 #define BOMB_MOVE_INTERVAL 0.5
 #define SCRIPT_MOVE_INTERVAL 0.35
-#define NADE_SOLVE_TRACE_BUDGET_PER_FRAME 256
-#define NADE_SOLVE_TIMEOUT_PER_ACTIVE_JOB 2.0
+#define NADE_SOLVE_TRACE_BUDGET_PER_FRAME 32
+#define NADE_SOLVE_TIME_BUDGET_PER_FRAME 0.0005
+#define NADE_SOLVE_TIMEOUT_BASE 3.0
+#define NADE_SOLVE_TIMEOUT_PER_EXTRA_JOB 1.0
+#define NADE_SOLVE_TIMEOUT_MAX 8.0
 #define NADE_SOLVE_ORIGIN_TOLERANCE 64.0
 #define NADE_SOLVE_TARGET_TOLERANCE 96.0
 #define NADE_SOLVE_CACHE_TTL 1.5
@@ -206,6 +209,21 @@ enum struct NadeSolveJob
 	float candidateRemainingTime;
 }
 
+enum struct NadeSolvePerfStats
+{
+	int activeFrames;
+	int traces;
+	int maxTracesPerFrame;
+	int timeBudgetHits;
+	int traceBudgetHits;
+	int completedJobs;
+	int failedJobs;
+	int timedOutJobs;
+	int maxQueuedJobs;
+	float totalFrameSeconds;
+	float maxFrameSeconds;
+}
+
 bool g_bNadeThrowPending[MAXPLAYERS+1];
 ScriptAction g_iScriptAction[MAXPLAYERS+1];
 int g_iScriptActionIndex[MAXPLAYERS+1];
@@ -219,6 +237,7 @@ float g_fLegacyDefaultNadeLastMoveTime[MAXPLAYERS+1];
 NadeSolveJob g_sNadeSolveJobs[MAXPLAYERS+1];
 int g_iNadeSolveRoundRobinClient = 1;
 int g_iNadeSolveActiveCount;
+NadeSolvePerfStats g_sNadeSolvePerf;
 bool g_bPeekAssigned[MAXPLAYERS+1];
 bool g_bTeamPeekUsedRound[4];
 bool g_bTeamPeekRollResolved[4];
@@ -508,6 +527,8 @@ public void OnPluginStart()
 	InitializeMapRuntime();
 
     RegServerCmd("team", Command_Team);
+    RegServerCmd("bb_nade_perf", Command_NadePerf);
+    RegServerCmd("bb_nade_perf_reset", Command_NadePerfReset);
     RegConsoleCmd("sm_validate_bots", Command_ValidateBots);
 }
 
@@ -642,7 +663,13 @@ public void OnMapStart()
 
 public void OnGameFrame()
 {
+	if (g_iNadeSolveActiveCount <= 0)
+		return;
+
 	int iTraceBudget = NADE_SOLVE_TRACE_BUDGET_PER_FRAME;
+	float fStartedAt = GetEngineTime();
+	float fDeadline = fStartedAt + NADE_SOLVE_TIME_BUDGET_PER_FRAME;
+	bool bTimeBudgetHit = false;
 	int iCursor = g_iNadeSolveRoundRobinClient;
 	int iInactiveClients = 0;
 	bool bValidated[MAXPLAYERS+1];
@@ -670,15 +697,38 @@ public void OnGameFrame()
 			bValidated[iClient] = true;
 			if (!IsNadeSolveJobRuntimeValid(iClient))
 			{
+				bool bTimedOut = GetGameTime() > g_sNadeSolveJobs[iClient].deadlineTime;
 				CancelNadeSolveJob(iClient);
+				if (bTimedOut)
+					g_sNadeSolvePerf.timedOutJobs++;
 				continue;
 			}
+		}
+
+		if (GetEngineTime() >= fDeadline)
+		{
+			bTimeBudgetHit = true;
+			break;
 		}
 
 		AdvanceNadeSolveJob(iClient, iTraceBudget);
 	}
 
 	g_iNadeSolveRoundRobinClient = iCursor;
+
+	int iUsedTraces = NADE_SOLVE_TRACE_BUDGET_PER_FRAME - iTraceBudget;
+	float fElapsed = GetEngineTime() - fStartedAt;
+	g_sNadeSolvePerf.activeFrames++;
+	g_sNadeSolvePerf.traces += iUsedTraces;
+	g_sNadeSolvePerf.totalFrameSeconds += fElapsed;
+	if (iUsedTraces > g_sNadeSolvePerf.maxTracesPerFrame)
+		g_sNadeSolvePerf.maxTracesPerFrame = iUsedTraces;
+	if (fElapsed > g_sNadeSolvePerf.maxFrameSeconds)
+		g_sNadeSolvePerf.maxFrameSeconds = fElapsed;
+	if (iTraceBudget <= 0)
+		g_sNadeSolvePerf.traceBudgetHits++;
+	if (bTimeBudgetHit)
+		g_sNadeSolvePerf.timeBudgetHits++;
 }
 
 void HookPlayerResourceEntity()
@@ -979,6 +1029,43 @@ void ResetNadeSolveJobs()
 
 	g_iNadeSolveActiveCount = 0;
 	g_iNadeSolveRoundRobinClient = 1;
+}
+
+void ResetNadeSolvePerfStats()
+{
+	g_sNadeSolvePerf.activeFrames = 0;
+	g_sNadeSolvePerf.traces = 0;
+	g_sNadeSolvePerf.maxTracesPerFrame = 0;
+	g_sNadeSolvePerf.timeBudgetHits = 0;
+	g_sNadeSolvePerf.traceBudgetHits = 0;
+	g_sNadeSolvePerf.completedJobs = 0;
+	g_sNadeSolvePerf.failedJobs = 0;
+	g_sNadeSolvePerf.timedOutJobs = 0;
+	g_sNadeSolvePerf.maxQueuedJobs = 0;
+	g_sNadeSolvePerf.totalFrameSeconds = 0.0;
+	g_sNadeSolvePerf.maxFrameSeconds = 0.0;
+}
+
+public Action Command_NadePerf(int iArgs)
+{
+	float fAverageTraces = 0.0;
+	float fAverageSeconds = 0.0;
+	if (g_sNadeSolvePerf.activeFrames > 0)
+	{
+		fAverageTraces = float(g_sNadeSolvePerf.traces) / float(g_sNadeSolvePerf.activeFrames);
+		fAverageSeconds = g_sNadeSolvePerf.totalFrameSeconds / float(g_sNadeSolvePerf.activeFrames);
+	}
+
+	PrintToServer("[NadePerf] active_frames=%d traces=%d avg_traces=%.2f max_traces=%d avg_seconds=%.6f max_seconds=%.6f", g_sNadeSolvePerf.activeFrames, g_sNadeSolvePerf.traces, fAverageTraces, g_sNadeSolvePerf.maxTracesPerFrame, fAverageSeconds, g_sNadeSolvePerf.maxFrameSeconds);
+	PrintToServer("[NadePerf] time_budget_hits=%d trace_budget_hits=%d completed=%d failed=%d timed_out=%d max_queued=%d", g_sNadeSolvePerf.timeBudgetHits, g_sNadeSolvePerf.traceBudgetHits, g_sNadeSolvePerf.completedJobs, g_sNadeSolvePerf.failedJobs, g_sNadeSolvePerf.timedOutJobs, g_sNadeSolvePerf.maxQueuedJobs);
+	return Plugin_Handled;
+}
+
+public Action Command_NadePerfReset(int iArgs)
+{
+	ResetNadeSolvePerfStats();
+	PrintToServer("[NadePerf] stats reset.");
+	return Plugin_Handled;
 }
 
 bool TryUseCachedNadeSolve(int iClient, const float fOrigin[3], const float fTarget[3], int iNadeDefIndex, float fLookAt[3], float fNow, bool &bSuccess)
@@ -5453,12 +5540,24 @@ bool NadeSolveJobMatchesRequest(int iClient, int iGrenadeEnt, int iNadeDefIndex,
 	return GetVectorDistance(g_sNadeSolveJobs[iClient].target, fTarget) <= NADE_SOLVE_TARGET_TOLERANCE;
 }
 
+float GetNadeSolveTimeout(int iActiveCount)
+{
+	int iExtraJobs = iActiveCount > 1 ? iActiveCount - 1 : 0;
+	float fTimeout = NADE_SOLVE_TIMEOUT_BASE
+		+ float(iExtraJobs) * NADE_SOLVE_TIMEOUT_PER_EXTRA_JOB;
+	return fTimeout < NADE_SOLVE_TIMEOUT_MAX
+		? fTimeout
+		: NADE_SOLVE_TIMEOUT_MAX;
+}
+
 void StartNadeSolveJob(int iClient, int iGrenadeEnt, int iNadeDefIndex, const float fOrigin[3], const float fEyePosition[3], const float fTarget[3], float fNow)
 {
 	ClearNadeSolveJob(iClient);
 
 	g_sNadeSolveJobs[iClient].phase = NadeSolve_Coarse;
 	g_iNadeSolveActiveCount++;
+	if (g_iNadeSolveActiveCount > g_sNadeSolvePerf.maxQueuedJobs)
+		g_sNadeSolvePerf.maxQueuedJobs = g_iNadeSolveActiveCount;
 	g_sNadeSolveJobs[iClient].clientUserId = GetClientUserId(iClient);
 	g_sNadeSolveJobs[iClient].grenadeEntRef = EntIndexToEntRef(iGrenadeEnt);
 	g_sNadeSolveJobs[iClient].grenadeDefIndex = iNadeDefIndex;
@@ -5467,16 +5566,14 @@ void StartNadeSolveJob(int iClient, int iGrenadeEnt, int iNadeDefIndex, const fl
 	g_sNadeSolveJobs[iClient].bestPitch = 0.0;
 	g_sNadeSolveJobs[iClient].bestDistance = 999999.0;
 	g_sNadeSolveJobs[iClient].candidateActive = false;
-	float fTimeout = NADE_SOLVE_TIMEOUT_PER_ACTIVE_JOB * g_iNadeSolveActiveCount;
-	g_sNadeSolveJobs[iClient].deadlineTime = fNow + fTimeout;
+	float fTimeout = GetNadeSolveTimeout(g_iNadeSolveActiveCount);
 	for (int i = 1; i <= MaxClients; i++)
 	{
-		if (i == iClient || !IsNadeSolveActive(i))
+		if (!IsNadeSolveActive(i))
 			continue;
 
-		float fDeadline = g_sNadeSolveJobs[i].requestTime + fTimeout;
-		if (fDeadline > g_sNadeSolveJobs[i].deadlineTime)
-			g_sNadeSolveJobs[i].deadlineTime = fDeadline;
+		g_sNadeSolveJobs[i].deadlineTime =
+			g_sNadeSolveJobs[i].requestTime + fTimeout;
 	}
 
 	Array_Copy(fOrigin, g_sNadeSolveJobs[iClient].startOrigin, 3);
@@ -5778,16 +5875,26 @@ void FailNadeSolveJob(int iClient)
 
 	ClearNadeSolveJob(iClient);
 
+	NadeSolveRequestResult eFallbackResult = NadeRequest_Rejected;
 	if (bStartFallback)
 	{
-		ProcessGrenadeThrow(iClient, fFallbackTarget, iGrenadeEnt);
-		if (IsNadeSolveActive(iClient))
+		eFallbackResult = ProcessGrenadeThrow(iClient, fFallbackTarget, iGrenadeEnt);
+		if (eFallbackResult == NadeRequest_Queued && IsNadeSolveActive(iClient))
 		{
 			g_sNadeSolveJobs[iClient].hasFallbackTarget = true;
 			g_sNadeSolveJobs[iClient].fallbackAttempted = true;
 			Array_Copy(fTarget, g_sNadeSolveJobs[iClient].fallbackTarget, 3);
+			return;
+		}
+
+		if (eFallbackResult == NadeRequest_Submitted)
+		{
+			g_sNadeSolvePerf.completedJobs++;
+			return;
 		}
 	}
+
+	g_sNadeSolvePerf.failedJobs++;
 }
 
 void CommitNadeSolveJob(int iClient, const float fLookAt[3])
@@ -5810,6 +5917,7 @@ void CommitNadeSolveJob(int iClient, const float fLookAt[3])
 	}
 
 	StoreNadeSolveCache(iClient, fOrigin, fTarget, iNadeDefIndex, fLookAt, true, GetGameTime());
+	g_sNadeSolvePerf.completedJobs++;
 	ClearNadeSolveJob(iClient);
 }
 
